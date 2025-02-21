@@ -71,7 +71,13 @@ def sync_repositories():
 
 if __name__ == "__main__":
     if not REPOS:
-        print("No repositories configured. Please add repository paths to the REPOS list.")
+        print("No repositories configured. Please add repository paths to the config file:")
+        print("~/.config/my_small_tools/sync_knowledge_base.ini")
+        print("Add paths under the [DEFAULT] section like this:")
+        print("[DEFAULT]")
+        print("repos = ")
+        print("    /path/to/first/repo")
+        print("    /path/to/second/repo")
         exit(1)
         
     if sync_repositories():
