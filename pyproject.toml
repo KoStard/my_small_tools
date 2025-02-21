@@ -1,7 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "my-small-tools"
+name = "my_small_tools"
 version = "0.1.0"
 description = "Collection of my tools for every day"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
+
+[project.scripts]
+sync-knowledge-base = "my_small_tools.sync_knowledge_base:main"
