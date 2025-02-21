@@ -1,0 +1,7 @@
+[project]
+name = "my-small-tools"
+version = "0.1.0"
+description = "Collection of my tools for every day"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
