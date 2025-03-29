@@ -75,16 +75,20 @@ def list_tmux_sessions():
 
 def create_new_session():
     """Guides the user through creating a new hermes research session."""
-    print("\n--- Create New Session ---")
-    session_suffix = prompt("Enter a short name for this research session (e.g., 'topic-analysis'): ")
+    try:
+        print("\n--- Create New Session ---")
+        session_suffix = prompt("Enter a short name for this research session (e.g., 'topic-analysis'): ")
 
-    if not session_suffix:
-        print("Session creation cancelled (no name provided).")
-        return
+        if not session_suffix:
+            print("Session creation cancelled (no name provided).")
+            return
+    except KeyboardInterrupt:
+        print("\nSession creation cancelled.")
+        raise  # Re-raise to be caught by main menu handler
 
-    # Basic validation for session suffix (avoid spaces, etc.)
-    if not session_suffix.isalnum() or ' ' in session_suffix:
-         print(f"Error: Session name '{session_suffix}' should be alphanumeric without spaces.")
+    # Basic validation for session suffix (avoid spaces and special chars that tmux might not like)
+    if not all(c.isalnum() or c in ('-', '_') for c in session_suffix) or ' ' in session_suffix:
+         print(f"Error: Session name '{session_suffix}' should only contain letters, numbers, dashes or underscores.")
          return
 
     session_name = f"{SESSION_PREFIX}{session_suffix}"
@@ -93,13 +97,17 @@ def create_new_session():
          print(f"Error: A tmux session named '{session_name}' already exists.")
          return
 
-    print("\nEnter the multi-line research text (Press Meta+Enter or Esc then Enter to finish):")
-    # Use prompt with multiline=True for research text input
-    research_text = prompt("Research Text> ", multiline=True)
+    try:
+        print("\nEnter the multi-line research text (Press Meta+Enter or Esc then Enter to finish):")
+        # Use prompt with multiline=True for research text input
+        research_text = prompt("Research Text> ", multiline=True)
 
-    if not research_text:
-        print("No research text provided. Session creation cancelled.")
-        return
+        if not research_text:
+            print("No research text provided. Session creation cancelled.")
+            return
+    except KeyboardInterrupt:
+        print("\nResearch text input cancelled.")
+        raise  # Re-raise to be caught by main menu handler
 
     # Construct the hermes command carefully, quoting the text
     # Using f-string with explicit quotes around text
@@ -197,24 +205,40 @@ def delete_sessions_interactive():
 def main():
     """Main menu loop."""
     while True:
-        print("\n--- Hermes Research Manager ---")
-        print("1: Create New Session")
-        print("2: List Active Sessions")
-        print("3: Delete Session(s)")
-        print("4: Exit")
+        try:
+            print("\n--- Hermes Research Manager ---")
+            print("1: Create New Session")
+            print("2: List Active Sessions")
+            print("3: Delete Session(s)")
+            print("4: Exit")
 
-        choice = prompt("Choose an action (1-4): ")
+            choice = prompt("Choose an action (1-4): ")
 
-        if choice == "1":
-            create_new_session()
-        elif choice == "2":
-            display_sessions()
-        elif choice == "3":
-            delete_sessions_interactive()
-        elif choice == "4":
-            break
-        else:
-            print("Invalid choice, please enter 1, 2, 3, or 4.")
+            if choice == "1":
+                try:
+                    create_new_session()
+                except KeyboardInterrupt:
+                    print("\nOperation cancelled. Returning to main menu.")
+            elif choice == "2":
+                display_sessions()
+            elif choice == "3":
+                try:
+                    delete_sessions_interactive()
+                except KeyboardInterrupt:
+                    print("\nOperation cancelled. Returning to main menu.")
+            elif choice == "4":
+                break
+            else:
+                print("Invalid choice, please enter 1, 2, 3, or 4.")
+        except KeyboardInterrupt:
+            print("\nPress Ctrl+C again to exit or wait to return to menu...")
+            try:
+                # Small delay to allow second Ctrl+C to exit
+                import time
+                time.sleep(1)
+            except KeyboardInterrupt:
+                print("\nExiting...")
+                break
 
     print("\nExiting.")
 
