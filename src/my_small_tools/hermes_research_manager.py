@@ -18,6 +18,11 @@ def parse_args():
         required=True,
         help='Hermes model to use (e.g. "gemini/gemini-2.0-flash-thinking-exp-01-21")'
     )
+    parser.add_argument(
+        'files',
+        nargs='*',
+        help='Files to pass to hermes chat as --textual_file arguments'
+    )
     return parser.parse_args()
 
 def create_tmux_session(session_name):
@@ -36,8 +41,12 @@ def create_tmux_session(session_name):
 def run_command_in_tmux(session_name, command):
     """Sends a command to a tmux session."""
     try:
-        # Ensure the command is sent as a single argument, properly quoted for the shell
-        subprocess.run(["tmux", "send-keys", "-t", session_name, command, "Enter"], check=True, capture_output=True)
+        # For tmux send-keys, we need to join the command list into a properly quoted string
+        if isinstance(command, list):
+            command_str = ' '.join(f'"{arg}"' if ' ' in arg else arg for arg in command)
+        else:
+            command_str = command
+        subprocess.run(["tmux", "send-keys", "-t", session_name, command_str, "Enter"], check=True, capture_output=True)
         print(f"Sent command to session '{session_name}'.")
     except subprocess.CalledProcessError as e:
         print(f"Error sending command to tmux session '{session_name}': {e.stderr.decode()}", file=sys.stderr)
@@ -86,7 +95,7 @@ def list_tmux_sessions():
         print("Error: 'tmux' command not found. Is tmux installed and in your PATH?", file=sys.stderr)
         sys.exit(1)
 
-def create_new_session(model):
+def create_new_session(model, args):
     """Guides the user through creating a new hermes research session."""
     try:
         print("\n--- Create New Session ---")
@@ -125,11 +134,16 @@ def create_new_session(model):
     # Construct the hermes command carefully, quoting the text
     # Using f-string with explicit quotes around text
     research_text_processed = research_text.replace('\"', '\\\"')
-    hermes_command = (
-        f"hermes chat --model {model} "
-        f"--deep-research {session_suffix} "
-        f"--text \"{research_text_processed}\"" # Basic escaping for double quotes within text
-    )
+    # Build command as list to avoid shell interpretation issues
+    hermes_command = [
+        "hermes", "chat",
+        "--model", model,
+        "--deep-research", session_suffix,
+        "--text", research_text_processed
+    ]
+    # Add files as --textual_file arguments
+    for file in args.files:
+        hermes_command.extend(["--textual_file", file])
 
     if create_tmux_session(session_name):
         run_command_in_tmux(session_name, hermes_command)
@@ -215,6 +229,91 @@ def delete_sessions_interactive():
             # Continue loop
 
 
+def create_bulk_sessions(model, args):
+    """Creates multiple sessions from bulk input."""
+    try:
+        print("\n--- Bulk Session Creation ---")
+        print("First, enter the shared research guidance (what to do with each problem):")
+        shared_guidance = prompt("Shared Guidance> ", multiline=True)
+        
+        if not shared_guidance:
+            print("No shared guidance provided. Bulk creation cancelled.")
+            return
+
+        print("\nNow enter the problem-specific inputs in this format:")
+        print("problem-specific text (1 line)")
+        print("session-name (1 line)")
+        print("(empty line)")
+        print("...repeat for each problem...")
+        bulk_input = prompt("Problem Inputs> ", multiline=True)
+
+        if not bulk_input:
+            print("No problem inputs provided. Bulk creation cancelled.")
+            return
+
+        # Process the bulk input
+        problems = []
+        current_problem = None
+        for line in bulk_input.split('\n'):
+            line = line.strip()
+            if not line:
+                if current_problem:
+                    problems.append(current_problem)
+                    current_problem = None
+                continue
+            if current_problem is None:
+                current_problem = {'text': line}
+            else:
+                current_problem['name'] = line
+        if current_problem:
+            problems.append(current_problem)
+
+        if not problems:
+            print("No valid problems found in input.")
+            return
+
+        print(f"\nFound {len(problems)} problems to process:")
+        for i, problem in enumerate(problems, 1):
+            print(f"  {i}: {problem.get('name', 'unnamed')}")
+
+        confirm = prompt("Create these sessions? (yes/no): ").lower().strip()
+        if confirm != 'yes':
+            print("Bulk creation cancelled.")
+            return
+
+        # Create sessions
+        created_count = 0
+        for problem in problems:
+            if 'name' not in problem or 'text' not in problem:
+                print(f"Skipping malformed problem: {problem}")
+                continue
+
+            session_name = f"{SESSION_PREFIX}{problem['name']}"
+            if session_name in list_tmux_sessions():
+                print(f"Skipping - session already exists: {session_name}")
+                continue
+
+            full_text = f"{shared_guidance}\n\n{problem['text']}"
+            hermes_command = [
+                "hermes", "chat",
+                "--model", model,
+                "--deep-research", problem['name'],
+                "--text", full_text.replace('\"', '\\\"')
+            ]
+            for file in args.files:
+                hermes_command.extend(["--textual_file", file])
+
+            if create_tmux_session(session_name):
+                run_command_in_tmux(session_name, hermes_command)
+                created_count += 1
+                print(f"Created session: {session_name}")
+
+        print(f"\nSuccessfully created {created_count}/{len(problems)} sessions.")
+
+    except KeyboardInterrupt:
+        print("\nBulk creation cancelled.")
+        raise
+
 def main():
     """Main menu loop."""
     args = parse_args()
@@ -222,28 +321,34 @@ def main():
         try:
             print("\n--- Hermes Research Manager ---")
             print("1: Create New Session")
-            print("2: List Active Sessions")
-            print("3: Delete Session(s)")
-            print("4: Exit")
+            print("2: Create Bulk Sessions")
+            print("3: List Active Sessions")
+            print("4: Delete Session(s)")
+            print("5: Exit")
 
             choice = prompt("Choose an action (1-4): ")
 
             if choice == "1":
                 try:
-                    create_new_session(args.model)
+                    create_new_session(args.model, args)
                 except KeyboardInterrupt:
                     print("\nOperation cancelled. Returning to main menu.")
             elif choice == "2":
-                display_sessions()
+                try:
+                    create_bulk_sessions(args.model, args)
+                except KeyboardInterrupt:
+                    print("\nOperation cancelled. Returning to main menu.")
             elif choice == "3":
+                display_sessions()
+            elif choice == "4":
                 try:
                     delete_sessions_interactive()
                 except KeyboardInterrupt:
                     print("\nOperation cancelled. Returning to main menu.")
-            elif choice == "4":
+            elif choice == "5":
                 break
             else:
-                print("Invalid choice, please enter 1, 2, 3, or 4.")
+                print("Invalid choice, please enter 1-5.")
         except KeyboardInterrupt:
             print("\nPress Ctrl+C again to exit or wait to return to menu...")
             try:
