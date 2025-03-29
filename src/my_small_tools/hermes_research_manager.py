@@ -1,11 +1,24 @@
 #!/usr/bin/env python
+import argparse
 import subprocess
 import sys
 from prompt_toolkit import prompt
 
 # Configuration
-HERMES_MODEL = "gemini/gemini-2.0-flash-thinking-exp-01-21"
 SESSION_PREFIX = "hermes-research-"
+
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description='Hermes Research Manager - Create and manage tmux sessions for Hermes research tasks',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument(
+        '--model',
+        required=True,
+        help='Hermes model to use (e.g. "gemini/gemini-2.0-flash-thinking-exp-01-21")'
+    )
+    return parser.parse_args()
 
 def create_tmux_session(session_name):
     """Creates a new detached tmux session."""
@@ -73,7 +86,7 @@ def list_tmux_sessions():
         print("Error: 'tmux' command not found. Is tmux installed and in your PATH?", file=sys.stderr)
         sys.exit(1)
 
-def create_new_session():
+def create_new_session(model):
     """Guides the user through creating a new hermes research session."""
     try:
         print("\n--- Create New Session ---")
@@ -113,7 +126,7 @@ def create_new_session():
     # Using f-string with explicit quotes around text
     research_text_processed = research_text.replace('\"', '\\\"')
     hermes_command = (
-        f"hermes chat --model {HERMES_MODEL} "
+        f"hermes chat --model {model} "
         f"--deep-research {session_suffix} "
         f"--text \"{research_text_processed}\"" # Basic escaping for double quotes within text
     )
@@ -204,6 +217,7 @@ def delete_sessions_interactive():
 
 def main():
     """Main menu loop."""
+    args = parse_args()
     while True:
         try:
             print("\n--- Hermes Research Manager ---")
@@ -216,7 +230,7 @@ def main():
 
             if choice == "1":
                 try:
-                    create_new_session()
+                    create_new_session(args.model)
                 except KeyboardInterrupt:
                     print("\nOperation cancelled. Returning to main menu.")
             elif choice == "2":
