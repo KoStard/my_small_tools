@@ -2,7 +2,6 @@
 import subprocess
 import sys
 from prompt_toolkit import prompt
-from prompt_toolkit.shortcuts import radiolist_dialog, input_dialog, message_dialog
 
 # Configuration
 HERMES_MODEL = "gemini/gemini-2.0-flash-thinking-exp-01-21"
@@ -54,26 +53,30 @@ def list_tmux_sessions():
 
 def create_new_session():
     """Guides the user through creating a new hermes research session."""
-    session_suffix = input_dialog(
-        title="New Research Session",
-        text="Enter a short name for this research session (used for directory and tmux session):"
-    ).run()
+    print("\n--- Create New Session ---")
+    session_suffix = prompt("Enter a short name for this research session (e.g., 'topic-analysis'): ")
 
     if not session_suffix:
-        message_dialog(title="Cancelled", text="Session creation cancelled.").run()
+        print("Session creation cancelled (no name provided).")
         return
+
+    # Basic validation for session suffix (avoid spaces, etc.)
+    if not session_suffix.isalnum() or ' ' in session_suffix:
+         print(f"Error: Session name '{session_suffix}' should be alphanumeric without spaces.")
+         return
 
     session_name = f"{SESSION_PREFIX}{session_suffix}"
     existing_sessions = list_tmux_sessions()
     if session_name in existing_sessions:
-         message_dialog(title="Error", text=f"A tmux session named '{session_name}' already exists.").run()
+         print(f"Error: A tmux session named '{session_name}' already exists.")
          return
 
     print("\nEnter the multi-line research text (Press Meta+Enter or Esc then Enter to finish):")
+    # Use prompt with multiline=True for research text input
     research_text = prompt("Research Text> ", multiline=True)
 
     if not research_text:
-        message_dialog(title="Cancelled", text="No research text provided. Session creation cancelled.").run()
+        print("No research text provided. Session creation cancelled.")
         return
 
     # Construct the hermes command carefully, quoting the text
@@ -87,44 +90,42 @@ def create_new_session():
 
     if create_tmux_session(session_name):
         run_command_in_tmux(session_name, hermes_command)
-        message_dialog(
-            title="Session Created",
-            text=f"Session '{session_name}' created and hermes command sent.\n"
-                 f"Attach to it with: tmux attach -t {session_name}"
-        ).run()
+        print(f"\nSession '{session_name}' created and hermes command sent.")
+        print(f"Attach to it with: tmux attach -t {session_name}")
 
 def display_sessions():
     """Displays the list of active hermes research sessions."""
+    print("\n--- Active Sessions ---")
     sessions = list_tmux_sessions()
     if not sessions:
-        message_dialog(title="List Sessions", text="No active hermes research sessions found.").run()
+        print("No active hermes research sessions found.")
     else:
-        session_list_text = "Active hermes research sessions:\n\n" + "\n".join(sessions)
-        session_list_text += "\n\nAttach to a session using: tmux attach -t <session_name>"
-        message_dialog(title="List Sessions", text=session_list_text).run()
+        print("Active hermes research sessions:")
+        for session in sessions:
+            print(f"  - {session}")
+        print("\nAttach to a session using: tmux attach -t <session_name>")
 
 
 def main():
     """Main menu loop."""
     while True:
-        choice = radiolist_dialog(
-            title="Hermes Research Manager",
-            text="Choose an action:",
-            values=[
-                ("create", "Create New Session"),
-                ("list", "List Active Sessions"),
-                ("exit", "Exit")
-            ]
-        ).run()
+        print("\n--- Hermes Research Manager ---")
+        print("1: Create New Session")
+        print("2: List Active Sessions")
+        print("3: Exit")
 
-        if choice == "create":
+        choice = prompt("Choose an action (1-3): ")
+
+        if choice == "1":
             create_new_session()
-        elif choice == "list":
+        elif choice == "2":
             display_sessions()
-        elif choice == "exit" or choice is None: # Handle Esc/cancel
+        elif choice == "3":
             break
+        else:
+            print("Invalid choice, please enter 1, 2, or 3.")
 
-    print("Exiting.")
+    print("\nExiting.")
 
 if __name__ == "__main__":
     main()

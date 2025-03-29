@@ -8,7 +8,10 @@ version = "0.1.0"
 description = "Collection of my tools for every day"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "prompt_toolkit>=3.0",
+]
 
 [project.scripts]
 sync-knowledge-base = "my_small_tools.sync_knowledge_base:main"
+hermes-research = "my_small_tools.hermes_research_manager:main"
