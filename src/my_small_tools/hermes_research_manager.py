@@ -31,7 +31,7 @@ def create_tmux_session(session_name):
         subprocess.run(["tmux", "new-session", "-d", "-s", session_name], check=True, capture_output=True)
         print(f"Created tmux session: {session_name}")
     except subprocess.CalledProcessError as e:
-        print(f"Error creating tmux session '{session_name}': {e.stderr.decode()}", file=sys.stderr)
+        print(f"Error creating tmux session '{session_name}': {e.stderr}", file=sys.stderr)
         return False
     except FileNotFoundError:
         print("Error: 'tmux' command not found. Is tmux installed and in your PATH?", file=sys.stderr)
@@ -49,7 +49,7 @@ def run_command_in_tmux(session_name, command):
         subprocess.run(["tmux", "send-keys", "-t", session_name, command_str, "Enter"], check=True, capture_output=True)
         print(f"Sent command to session '{session_name}'.")
     except subprocess.CalledProcessError as e:
-        print(f"Error sending command to tmux session '{session_name}': {e.stderr.decode()}", file=sys.stderr)
+        print(f"Error sending command to tmux session '{session_name}': {e.stderr}", file=sys.stderr)
     except FileNotFoundError:
         # This should have been caught by create_tmux_session, but check again just in case.
         print("Error: 'tmux' command not found.", file=sys.stderr)
@@ -64,13 +64,13 @@ def delete_tmux_session(session_name):
         return True
     except subprocess.CalledProcessError as e:
         # Handle case where session might have already been deleted or doesn't exist
-        stderr = e.stderr.decode().lower()
+        stderr = e.stderr.lower()
         if "no server running" in stderr or "can't find session" in stderr or "no session" in stderr:
              print(f"Session '{session_name}' not found or already deleted.")
              # Consider this non-fatal for the delete loop's purpose
              return True # Return True so the interactive loop refreshes list
         else:
-            print(f"Error deleting tmux session '{session_name}': {e.stderr.decode()}", file=sys.stderr)
+            print(f"Error deleting tmux session '{session_name}': {e.stderr}", file=sys.stderr)
             return False
     except FileNotFoundError:
         print("Error: 'tmux' command not found.", file=sys.stderr)
@@ -87,9 +87,9 @@ def list_tmux_sessions():
         return hermes_sessions
     except subprocess.CalledProcessError as e:
         # If no server is running, it's not an error, just means no sessions.
-        if "no server running" in e.stderr.decode().lower():
+        if "no server running" in e.stderr.lower():
             return []
-        print(f"Error listing tmux sessions: {e.stderr.decode()}", file=sys.stderr)
+        print(f"Error listing tmux sessions: {e.stderr}", file=sys.stderr)
         return []
     except FileNotFoundError:
         print("Error: 'tmux' command not found. Is tmux installed and in your PATH?", file=sys.stderr)
