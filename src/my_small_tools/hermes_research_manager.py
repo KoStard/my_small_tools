@@ -13,6 +13,7 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "config.ini")
 DEFAULT_CONFIG = {
     "general": {
         "research_directory": "",
+        "default_model": "",
     }
 }
 
@@ -62,8 +63,8 @@ def parse_args():
     run_parser = subparsers.add_parser('run', help='Run the research manager')
     run_parser.add_argument(
         '--model',
-        required=True,
-        help='Hermes model to use (e.g. "gemini/gemini-2.0-flash-thinking-exp-01-21")'
+        required=False,
+        help='Hermes model to use (e.g. "gemini/gemini-2.0-flash-thinking-exp-01-21"). If not provided, uses the configured default model.'
     )
     run_parser.add_argument(
         'files',
@@ -78,6 +79,10 @@ def parse_args():
     # Set research directory
     set_dir_parser = config_subparsers.add_parser('set-directory', help='Set default research directory')
     set_dir_parser.add_argument('directory', help='Path to research directory')
+    
+    # Set default model
+    set_model_parser = config_subparsers.add_parser('set-model', help='Set default Hermes model')
+    set_model_parser.add_argument('model', help='Default Hermes model to use')
     
     # Show config
     config_subparsers.add_parser('show', help='Show current configuration')
@@ -407,6 +412,12 @@ def handle_config_commands(args):
         save_config(config)
         print(f"Default research directory set to: {directory}")
     
+    elif args.config_command == 'set-model':
+        model = args.model
+        config.set('general', 'default_model', model)
+        save_config(config)
+        print(f"Default Hermes model set to: {model}")
+    
     elif args.config_command == 'show':
         print("\n--- Current Configuration ---")
         for section in config.sections():
@@ -428,13 +439,18 @@ def run_interactive_menu(args):
     """Run the interactive menu for the research manager."""
     config = load_config()
     
-    # If model wasn't provided, ask for it
+    # Get model from args, config, or prompt
     model = args.model
     if not model:
-        model = prompt("Enter Hermes model to use: ")
+        # Try to get from config
+        model = config.get('general', 'default_model', fallback='')
+        
+        # If still no model, prompt the user
         if not model:
-            print("No model specified. Exiting.")
-            return
+            model = prompt("Enter Hermes model to use: ")
+            if not model:
+                print("No model specified. Exiting.")
+                return
     
     while True:
         try:
