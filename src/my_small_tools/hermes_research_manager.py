@@ -1,11 +1,52 @@
 #!/usr/bin/env python
 import argparse
+import configparser
+import os
 import subprocess
 import sys
 from prompt_toolkit import prompt
 
 # Configuration
 SESSION_PREFIX = "hermes-research-"
+CONFIG_DIR = os.path.expanduser("~/.config/hermes_research_manager")
+CONFIG_FILE = os.path.join(CONFIG_DIR, "config.ini")
+DEFAULT_CONFIG = {
+    "general": {
+        "research_directory": "",
+    }
+}
+
+def load_config():
+    """Load configuration from file or create default if it doesn't exist."""
+    config = configparser.ConfigParser()
+    
+    # Set default config
+    for section, options in DEFAULT_CONFIG.items():
+        if not config.has_section(section):
+            config.add_section(section)
+        for option, value in options.items():
+            config.set(section, option, value)
+    
+    # Create config directory if it doesn't exist
+    if not os.path.exists(CONFIG_DIR):
+        os.makedirs(CONFIG_DIR)
+    
+    # Load existing config if it exists
+    if os.path.exists(CONFIG_FILE):
+        config.read(CONFIG_FILE)
+    else:
+        # Create default config file
+        with open(CONFIG_FILE, 'w') as f:
+            config.write(f)
+        print(f"Created default configuration file at {CONFIG_FILE}")
+    
+    return config
+
+def save_config(config):
+    """Save configuration to file."""
+    with open(CONFIG_FILE, 'w') as f:
+        config.write(f)
+    print(f"Configuration saved to {CONFIG_FILE}")
 
 def parse_args():
     """Parse command line arguments."""
@@ -13,30 +54,68 @@ def parse_args():
         description='Hermes Research Manager - Create and manage tmux sessions for Hermes research tasks',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    parser.add_argument(
+    
+    # Create subparsers for different commands
+    subparsers = parser.add_subparsers(dest='command', help='Commands')
+    
+    # Run command (default)
+    run_parser = subparsers.add_parser('run', help='Run the research manager')
+    run_parser.add_argument(
         '--model',
         required=True,
         help='Hermes model to use (e.g. "gemini/gemini-2.0-flash-thinking-exp-01-21")'
     )
-    parser.add_argument(
+    run_parser.add_argument(
         'files',
         nargs='*',
         help='Files to pass to hermes chat as --textual_file arguments'
     )
-    return parser.parse_args()
+    
+    # Config commands
+    config_parser = subparsers.add_parser('config', help='Manage configuration')
+    config_subparsers = config_parser.add_subparsers(dest='config_command', help='Configuration commands')
+    
+    # Set research directory
+    set_dir_parser = config_subparsers.add_parser('set-directory', help='Set default research directory')
+    set_dir_parser.add_argument('directory', help='Path to research directory')
+    
+    # Show config
+    config_subparsers.add_parser('show', help='Show current configuration')
+    
+    # Edit config
+    config_subparsers.add_parser('edit', help='Open configuration file in editor')
+    
+    args = parser.parse_args()
+    
+    # Default to 'run' command if no command specified
+    if not args.command:
+        args.command = 'run'
+        args.model = None
+        args.files = []
+    
+    return args
 
-def create_tmux_session(session_name):
+def create_tmux_session(session_name, config):
     """Creates a new detached tmux session."""
     try:
+        # Create the session
         subprocess.run(["tmux", "new-session", "-d", "-s", session_name], check=True, capture_output=True)
         print(f"Created tmux session: {session_name}")
+        
+        # Change directory if configured
+        research_dir = config.get('general', 'research_directory', fallback='')
+        if research_dir and os.path.isdir(research_dir):
+            subprocess.run(["tmux", "send-keys", "-t", session_name, f"cd {research_dir}", "Enter"], 
+                          check=True, capture_output=True)
+            print(f"Changed directory to: {research_dir}")
+        
+        return True
     except subprocess.CalledProcessError as e:
-        print(f"Error creating tmux session '{session_name}': {e.stderr}", file=sys.stderr)
+        print(f"Error creating tmux session '{session_name}': {e.stderr.decode() if hasattr(e.stderr, 'decode') else e.stderr}", file=sys.stderr)
         return False
     except FileNotFoundError:
         print("Error: 'tmux' command not found. Is tmux installed and in your PATH?", file=sys.stderr)
         sys.exit(1)
-    return True
 
 def run_command_in_tmux(session_name, command):
     """Sends a command to a tmux session."""
@@ -95,7 +174,7 @@ def list_tmux_sessions():
         print("Error: 'tmux' command not found. Is tmux installed and in your PATH?", file=sys.stderr)
         sys.exit(1)
 
-def create_new_session(model, args):
+def create_new_session(model, args, config):
     """Guides the user through creating a new hermes research session."""
     try:
         print("\n--- Create New Session ---")
@@ -145,7 +224,7 @@ def create_new_session(model, args):
     for file in args.files:
         hermes_command.extend(["--textual_file", file])
 
-    if create_tmux_session(session_name):
+    if create_tmux_session(session_name, config):
         run_command_in_tmux(session_name, hermes_command)
         print(f"\nSession '{session_name}' created and hermes command sent.")
         print(f"Attach to it with: tmux attach -t {session_name}")
@@ -229,7 +308,7 @@ def delete_sessions_interactive():
             # Continue loop
 
 
-def create_bulk_sessions(model, args):
+def create_bulk_sessions(model, args, config):
     """Creates multiple sessions from bulk input."""
     try:
         print("\n--- Bulk Session Creation ---")
@@ -303,7 +382,7 @@ def create_bulk_sessions(model, args):
             for file in args.files:
                 hermes_command.extend(["--textual_file", file])
 
-            if create_tmux_session(session_name):
+            if create_tmux_session(session_name, config):
                 run_command_in_tmux(session_name, hermes_command)
                 created_count += 1
                 print(f"Created session: {session_name}")
@@ -314,9 +393,49 @@ def create_bulk_sessions(model, args):
         print("\nBulk creation cancelled.")
         raise
 
-def main():
-    """Main menu loop."""
-    args = parse_args()
+def handle_config_commands(args):
+    """Handle configuration-related commands."""
+    config = load_config()
+    
+    if args.config_command == 'set-directory':
+        directory = os.path.abspath(os.path.expanduser(args.directory))
+        if not os.path.isdir(directory):
+            print(f"Error: Directory '{directory}' does not exist.")
+            return
+        
+        config.set('general', 'research_directory', directory)
+        save_config(config)
+        print(f"Default research directory set to: {directory}")
+    
+    elif args.config_command == 'show':
+        print("\n--- Current Configuration ---")
+        for section in config.sections():
+            print(f"[{section}]")
+            for key, value in config.items(section):
+                print(f"{key} = {value}")
+        print(f"\nConfiguration file: {CONFIG_FILE}")
+    
+    elif args.config_command == 'edit':
+        editor = os.environ.get('EDITOR', 'nano')
+        try:
+            subprocess.run([editor, CONFIG_FILE])
+        except FileNotFoundError:
+            print(f"Error: Editor '{editor}' not found. Set the EDITOR environment variable.")
+        except Exception as e:
+            print(f"Error opening editor: {e}")
+
+def run_interactive_menu(args):
+    """Run the interactive menu for the research manager."""
+    config = load_config()
+    
+    # If model wasn't provided, ask for it
+    model = args.model
+    if not model:
+        model = prompt("Enter Hermes model to use: ")
+        if not model:
+            print("No model specified. Exiting.")
+            return
+    
     while True:
         try:
             print("\n--- Hermes Research Manager ---")
@@ -330,12 +449,12 @@ def main():
 
             if choice == "1":
                 try:
-                    create_new_session(args.model, args)
+                    create_new_session(model, args, config)
                 except KeyboardInterrupt:
                     print("\nOperation cancelled. Returning to main menu.")
             elif choice == "2":
                 try:
-                    create_bulk_sessions(args.model, args)
+                    create_bulk_sessions(model, args, config)
                 except KeyboardInterrupt:
                     print("\nOperation cancelled. Returning to main menu.")
             elif choice == "3":
@@ -360,6 +479,15 @@ def main():
                 break
 
     print("\nExiting.")
+
+def main():
+    """Main entry point."""
+    args = parse_args()
+    
+    if args.command == 'config':
+        handle_config_commands(args)
+    else:  # 'run' command
+        run_interactive_menu(args)
 
 if __name__ == "__main__":
     main()
