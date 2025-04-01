@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 import argparse
 import configparser
+import datetime
 import os
 import subprocess
 import sys
@@ -70,6 +71,18 @@ def parse_args():
         'files',
         nargs='*',
         help='Files to pass to hermes chat as --textual_file arguments'
+    )
+    
+    # From-file command
+    from_file_parser = subparsers.add_parser('from-file', help='Run research from a saved markdown file')
+    from_file_parser.add_argument(
+        'markdown_file',
+        help='Path to the markdown file containing the research request'
+    )
+    from_file_parser.add_argument(
+        '--model',
+        required=False,
+        help='Override the model specified in the file'
     )
     
     # Config commands
@@ -179,6 +192,177 @@ def list_tmux_sessions():
         print("Error: 'tmux' command not found. Is tmux installed and in your PATH?", file=sys.stderr)
         sys.exit(1)
 
+def save_research_to_markdown(session_suffix, research_text, model, files=None):
+    """Save research request to a markdown file with frontmatter."""
+    config = load_config()
+    research_dir = config.get('general', 'research_directory', fallback='')
+    
+    if not research_dir:
+        print("Warning: No research directory configured. Skipping markdown save.")
+        return None
+    
+    if not os.path.isdir(research_dir):
+        try:
+            os.makedirs(research_dir)
+            print(f"Created research directory: {research_dir}")
+        except Exception as e:
+            print(f"Error creating research directory: {e}")
+            return None
+    
+    # Create research-files subdirectory
+    research_files_dir = os.path.join(research_dir, "research-files")
+    if not os.path.isdir(research_files_dir):
+        try:
+            os.makedirs(research_files_dir)
+            print(f"Created research files directory: {research_files_dir}")
+        except Exception as e:
+            print(f"Error creating research files directory: {e}")
+            return None
+    
+    # Format date for filename
+    date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    filename = f"{date_str}-{session_suffix}.md"
+    filepath = os.path.join(research_files_dir, filename)
+    
+    # Create frontmatter and content
+    frontmatter = "---\n"
+    frontmatter += f"title: {session_suffix}\n"
+    frontmatter += f"date: {datetime.datetime.now().isoformat()}\n"
+    frontmatter += f"model: {model}\n"
+    if files:
+        frontmatter += "files:\n"
+        for file in files:
+            frontmatter += f"  - {file}\n"
+    frontmatter += "---\n\n"
+    
+    content = frontmatter + research_text
+    
+    try:
+        with open(filepath, 'w') as f:
+            f.write(content)
+        print(f"Research saved to: {filepath}")
+        return filepath
+    except Exception as e:
+        print(f"Error saving research to markdown: {e}")
+        return None
+
+def parse_markdown_research(filepath):
+    """Parse a markdown file with frontmatter to extract research details."""
+    try:
+        with open(filepath, 'r') as f:
+            content = f.read()
+        
+        # Extract frontmatter
+        if content.startswith('---'):
+            _, frontmatter, body = content.split('---', 2)
+            
+            # Parse frontmatter
+            metadata = {}
+            for line in frontmatter.strip().split('\n'):
+                if ':' in line:
+                    key, value = line.split(':', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    
+                    if key == 'files':
+                        # Files will be handled separately
+                        continue
+                    elif key == 'title':
+                        metadata['session_suffix'] = value
+                    else:
+                        metadata[key] = value
+            
+            # Parse files list
+            files = []
+            in_files = False
+            for line in frontmatter.strip().split('\n'):
+                if line.startswith('files:'):
+                    in_files = True
+                    continue
+                if in_files and line.strip().startswith('- '):
+                    files.append(line.strip()[2:])
+                elif in_files and not line.strip().startswith('  '):
+                    in_files = False
+            
+            metadata['files'] = files
+            metadata['research_text'] = body.strip()
+            
+            return metadata
+        else:
+            print(f"Error: {filepath} does not contain valid frontmatter")
+            return None
+    except Exception as e:
+        print(f"Error parsing markdown file: {e}")
+        return None
+
+def run_research_from_file(filepath, override_model=None):
+    """Run a research session from a saved markdown file."""
+    config = load_config()
+    
+    # Check if filepath is relative to research directory
+    if not os.path.isabs(filepath):
+        research_dir = config.get('general', 'research_directory', fallback='')
+        if research_dir:
+            # Try in research-files subdirectory first
+            research_files_path = os.path.join(research_dir, "research-files", filepath)
+            if os.path.exists(research_files_path):
+                filepath = research_files_path
+            else:
+                # Try in main research directory
+                research_path = os.path.join(research_dir, filepath)
+                if os.path.exists(research_path):
+                    filepath = research_path
+    
+    if not os.path.exists(filepath):
+        print(f"Error: File not found: {filepath}")
+        return False
+    
+    # Parse the markdown file
+    metadata = parse_markdown_research(filepath)
+    if not metadata:
+        return False
+    
+    # Extract details
+    session_suffix = metadata.get('session_suffix')
+    research_text = metadata.get('research_text')
+    model = override_model or metadata.get('model')
+    files = metadata.get('files', [])
+    
+    if not session_suffix or not research_text or not model:
+        print(f"Error: Missing required metadata in {filepath}")
+        return False
+    
+    # Create session
+    session_name = f"{SESSION_PREFIX}{session_suffix}"
+    existing_sessions = list_tmux_sessions()
+    if session_name in existing_sessions:
+        print(f"Error: A tmux session named '{session_name}' already exists.")
+        return False
+    
+    # Build command
+    research_text_processed = research_text.replace('\"', '\\\"')
+    hermes_command = [
+        "hermes", "chat",
+        "--model", model,
+        "--deep-research", session_suffix,
+        "--text", research_text_processed
+    ]
+    
+    # Add files
+    for file in files:
+        if os.path.exists(file):
+            hermes_command.extend(["--textual_file", file])
+        else:
+            print(f"Warning: File not found: {file}")
+    
+    if create_tmux_session(session_name, config):
+        run_command_in_tmux(session_name, hermes_command)
+        print(f"\nSession '{session_name}' created and hermes command sent.")
+        print(f"Attach to it with: tmux attach -t {session_name}")
+        return True
+    
+    return False
+
 def create_new_session(model, args, config):
     """Guides the user through creating a new hermes research session."""
     try:
@@ -214,6 +398,9 @@ def create_new_session(model, args, config):
     except KeyboardInterrupt:
         print("\nResearch text input cancelled.")
         raise  # Re-raise to be caught by main menu handler
+
+    # Save research to markdown file
+    save_research_to_markdown(session_suffix, research_text, model, args.files)
 
     # Construct the hermes command carefully, quoting the text
     # Using f-string with explicit quotes around text
@@ -378,6 +565,10 @@ def create_bulk_sessions(model, args, config):
                 continue
 
             full_text = f"{shared_guidance}\n\n{problem['text']}"
+            
+            # Save research to markdown file
+            save_research_to_markdown(problem['name'], full_text, model, args.files)
+            
             hermes_command = [
                 "hermes", "chat",
                 "--model", model,
@@ -502,6 +693,12 @@ def main():
     
     if args.command == 'config':
         handle_config_commands(args)
+    elif args.command == 'from-file':
+        if not os.path.exists(args.markdown_file):
+            print(f"Error: File not found: {args.markdown_file}")
+            sys.exit(1)
+        success = run_research_from_file(args.markdown_file, args.model)
+        sys.exit(0 if success else 1)
     else:  # 'run' command
         run_interactive_menu(args)
 
