@@ -113,12 +113,30 @@ def parse_args():
     
     return args
 
+class TemporaryUnsetEnv:
+    """Context manager for temporarily unsetting an environment variable."""
+    def __init__(self, name):
+        self.name = name
+        self.original_value = None
+        
+    def __enter__(self):
+        if self.name in os.environ:
+            self.original_value = os.environ[self.name]
+            del os.environ[self.name]
+        return self
+        
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.original_value is not None:
+            os.environ[self.name] = self.original_value
+
 def create_tmux_session(session_name, config):
     """Creates a new detached tmux session."""
     try:
-        # Create the session
-        subprocess.run(["tmux", "new-session", "-d", "-s", session_name], check=True, capture_output=True)
-        print(f"Created tmux session: {session_name}")
+        # Use context manager to temporarily unset TMUX
+        with TemporaryUnsetEnv('TMUX'):
+            # Create the session
+            subprocess.run(["tmux", "new-session", "-d", "-s", session_name], check=True, capture_output=True)
+            print(f"Created tmux session: {session_name}")
         
         # Change directory if configured
         research_dir = config.get('general', 'research_directory', fallback='')
@@ -358,7 +376,14 @@ def run_research_from_file(filepath, override_model=None):
     if create_tmux_session(session_name, config):
         run_command_in_tmux(session_name, hermes_command)
         print(f"\nSession '{session_name}' created and hermes command sent.")
-        print(f"Attach to it with: tmux attach -t {session_name}")
+        
+        # Provide different instructions based on whether user is already in tmux
+        if 'TMUX' in os.environ:
+            print(f"Since you're already in a tmux session, switch to it with: tmux switch-client -t {session_name}")
+            print(f"Or press Ctrl+B S to interactively select and switch to the session")
+            print(f"Or you can detach from current session with Ctrl+B d, then attach with: tmux attach -t {session_name}")
+        else:
+            print(f"Attach to it with: tmux attach -t {session_name}")
         return True
     
     return False
@@ -419,7 +444,14 @@ def create_new_session(model, args, config):
     if create_tmux_session(session_name, config):
         run_command_in_tmux(session_name, hermes_command)
         print(f"\nSession '{session_name}' created and hermes command sent.")
-        print(f"Attach to it with: tmux attach -t {session_name}")
+        
+        # Provide different instructions based on whether user is already in tmux
+        if 'TMUX' in os.environ:
+            print(f"Since you're already in a tmux session, switch to it with: tmux switch-client -t {session_name}")
+            print(f"Or press Ctrl+B S to interactively select and switch to the session")
+            print(f"Or you can detach from current session with Ctrl+B d, then attach with: tmux attach -t {session_name}")
+        else:
+            print(f"Attach to it with: tmux attach -t {session_name}")
 
 def display_sessions():
     """Displays the list of active hermes research sessions."""
@@ -431,7 +463,13 @@ def display_sessions():
         print("Active hermes research sessions:")
         for session in sessions:
             print(f"  - {session}")
-        print("\nAttach to a session using: tmux attach -t <session_name>")
+        # Provide different instructions based on whether user is already in tmux
+        if 'TMUX' in os.environ:
+            print("\nSince you're already in a tmux session, switch to a session with: tmux switch-client -t <session_name>")
+            print("Or press Ctrl+B S to interactively select and switch to the session")
+            print("Or you can detach from current session with Ctrl+B d, then attach with: tmux attach -t <session_name>")
+        else:
+            print("\nAttach to a session using: tmux attach -t <session_name>")
 
 
 def delete_sessions_interactive():
