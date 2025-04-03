@@ -640,21 +640,21 @@ def select_remote_server(server_manager):
     
     servers = server_manager.get_all_servers()
     print("\nWhere do you want to run this research?")
-    print("0: Local machine")
-    for i, server in enumerate(servers, 1):
+    print("1: Local machine")
+    for i, server in enumerate(servers, 2):
         print(f"{i}: {server}")
     
     while True:
         try:
-            choice = prompt("Choice [0]: ").strip()
+            choice = prompt("Choice [1]: ").strip()
             if not choice:
                 return None
             
             index = int(choice)
-            if index == 0:
+            if index == 1:
                 return None
-            elif 1 <= index <= len(servers):
-                return servers[index - 1]
+            elif 2 <= index <= len(servers) + 1:
+                return servers[index - 2]
             else:
                 print(f"Invalid choice: {choice}")
                 continue
