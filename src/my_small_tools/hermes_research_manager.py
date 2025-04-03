@@ -503,6 +503,7 @@ def run_research_from_file(filepath, override_model=None):
             return False
     
     # Create session
+    original_session_suffix = session_suffix
     session_name = f"{SESSION_PREFIX}{session_suffix}"
     
     # Check if session exists locally or on the selected remote server
@@ -516,8 +517,60 @@ def run_research_from_file(filepath, override_model=None):
         session_exists = True
         
     if session_exists:
-        print(f"Error: A tmux session named '{session_name}' already exists.")
-        return False
+        print(f"\nA tmux session named '{session_name}' already exists.")
+        print("Options:")
+        print("1: Generate a unique name automatically")
+        print("2: Connect to the existing session")
+        print("3: Try a different file")
+        
+        try:
+            choice = prompt("Choose an option (1-3): ").strip()
+            
+            if choice == "1":
+                # Generate unique name with suffix
+                counter = 1
+                while True:
+                    new_suffix = f"{session_suffix}-{counter}"
+                    new_name = f"{SESSION_PREFIX}{new_suffix}"
+                    
+                    exists = False
+                    if remote_server:
+                        if remote_server.name in all_sessions and new_name in all_sessions[remote_server.name]:
+                            exists = True
+                    elif "local" in all_sessions and new_name in all_sessions["local"]:
+                        exists = True
+                    
+                    if not exists:
+                        print(f"Using unique name: {new_name}")
+                        session_suffix = new_suffix
+                        session_name = new_name
+                        break
+                    
+                    counter += 1
+            elif choice == "2":
+                # Connect to existing session
+                location = f"on {remote_server.name}" if remote_server else "locally"
+                print(f"\nExisting session '{session_name}' {location}.")
+                
+                if remote_server:
+                    print(f"To connect to the remote session:")
+                    print(f"  1. SSH to {remote_server.username}@{remote_server.hostname}")
+                    print(f"  2. Run: tmux attach -t {session_name}")
+                elif 'TMUX' in os.environ:
+                    print(f"Since you're already in a tmux session, switch to it with: tmux switch-client -t {session_name}")
+                    print(f"Or press Ctrl+B S to interactively select and switch to the session")
+                else:
+                    print(f"Attach to it with: tmux attach -t {session_name}")
+                return True
+            elif choice == "3":
+                print("Operation cancelled. Please try with a different file.")
+                return False
+            else:
+                print("Invalid choice. Operation cancelled.")
+                return False
+        except KeyboardInterrupt:
+            print("\nOperation cancelled.")
+            return False
     
     # Process files for remote server if needed
     remote_files = []
@@ -591,25 +644,26 @@ def select_remote_server(server_manager):
     for i, server in enumerate(servers, 1):
         print(f"{i}: {server}")
     
-    try:
-        choice = prompt("Choice [0]: ").strip()
-        if not choice:
-            return None
-        
-        index = int(choice)
-        if index == 0:
-            return None
-        elif 1 <= index <= len(servers):
-            return servers[index - 1]
-        else:
-            print(f"Invalid choice: {choice}")
-            return None
-    except ValueError:
-        print(f"Invalid input: {choice}")
-        return None
-    except KeyboardInterrupt:
-        print("\nSelection cancelled.")
-        raise
+    while True:
+        try:
+            choice = prompt("Choice [0]: ").strip()
+            if not choice:
+                return None
+            
+            index = int(choice)
+            if index == 0:
+                return None
+            elif 1 <= index <= len(servers):
+                return servers[index - 1]
+            else:
+                print(f"Invalid choice: {choice}")
+                continue
+        except ValueError:
+            print(f"Invalid input: {choice}")
+            continue
+        except KeyboardInterrupt:
+            print("\nSelection cancelled.")
+            raise
 
 def create_new_session(model, args, config):
     """Guides the user through creating a new hermes research session."""
@@ -632,14 +686,8 @@ def create_new_session(model, args, config):
          print(f"Error: Session name '{session_suffix}' should only contain letters, numbers, dashes or underscores.")
          return
 
-    session_name = f"{SESSION_PREFIX}{session_suffix}"
-    
-    # Check if session exists locally or on any remote server
-    all_sessions = list_tmux_sessions(server_manager)
-    for location, sessions in all_sessions.items():
-        if session_name in sessions:
-            print(f"Error: A tmux session named '{session_name}' already exists on {location}.")
-            return
+    # We'll check for uniqueness after selecting the host
+    original_session_suffix = session_suffix
 
     try:
         print("\nEnter the multi-line research text (Press Meta+Enter or Esc then Enter to finish):")
@@ -661,6 +709,73 @@ def create_new_session(model, args, config):
         except KeyboardInterrupt:
             print("\nServer selection cancelled.")
             raise  # Re-raise to be caught by main menu handler
+    
+    # Now check if session exists on the selected host
+    session_name = f"{SESSION_PREFIX}{session_suffix}"
+    all_sessions = list_tmux_sessions(server_manager if remote_server else None)
+    
+    session_exists = False
+    if remote_server:
+        if remote_server.name in all_sessions and session_name in all_sessions[remote_server.name]:
+            session_exists = True
+    elif "local" in all_sessions and session_name in all_sessions["local"]:
+        session_exists = True
+    
+    if session_exists:
+        print(f"\nA tmux session named '{session_name}' already exists.")
+        print("Options:")
+        print("1: Generate a unique name automatically")
+        print("2: Connect to the existing session")
+        print("3: Try a different name")
+        
+        try:
+            choice = prompt("Choose an option (1-3): ").strip()
+            
+            if choice == "1":
+                # Generate unique name with suffix
+                counter = 1
+                while True:
+                    new_suffix = f"{session_suffix}-{counter}"
+                    new_name = f"{SESSION_PREFIX}{new_suffix}"
+                    
+                    exists = False
+                    if remote_server:
+                        if remote_server.name in all_sessions and new_name in all_sessions[remote_server.name]:
+                            exists = True
+                    elif "local" in all_sessions and new_name in all_sessions["local"]:
+                        exists = True
+                    
+                    if not exists:
+                        print(f"Using unique name: {new_name}")
+                        session_suffix = new_suffix
+                        session_name = new_name
+                        break
+                    
+                    counter += 1
+            elif choice == "2":
+                # Connect to existing session
+                location = f"on {remote_server.name}" if remote_server else "locally"
+                print(f"\nExisting session '{session_name}' {location}.")
+                
+                if remote_server:
+                    print(f"To connect to the remote session:")
+                    print(f"  1. SSH to {remote_server.username}@{remote_server.hostname}")
+                    print(f"  2. Run: tmux attach -t {session_name}")
+                elif 'TMUX' in os.environ:
+                    print(f"Since you're already in a tmux session, switch to it with: tmux switch-client -t {session_name}")
+                    print(f"Or press Ctrl+B S to interactively select and switch to the session")
+                else:
+                    print(f"Attach to it with: tmux attach -t {session_name}")
+                return
+            elif choice == "3":
+                print("Returning to main menu. Please try again with a different name.")
+                return
+            else:
+                print("Invalid choice. Returning to main menu.")
+                return
+        except KeyboardInterrupt:
+            print("\nOperation cancelled. Returning to main menu.")
+            return
     
     # Save research to markdown file (always save locally)
     save_research_to_markdown(session_suffix, research_text, model, args.files)
@@ -958,6 +1073,9 @@ def create_bulk_sessions(model, args, config):
                         print("Bulk creation cancelled.")
                         return
 
+        # Get all sessions once to avoid repeated checks
+        all_sessions = list_tmux_sessions(server_manager if remote_server else None)
+        
         # Create sessions
         created_count = 0
         for problem in problems:
@@ -965,12 +1083,12 @@ def create_bulk_sessions(model, args, config):
                 print(f"Skipping malformed problem: {problem}")
                 continue
 
-            session_name = f"{SESSION_PREFIX}{problem['name']}"
+            original_name = problem['name']
+            session_suffix = original_name
+            session_name = f"{SESSION_PREFIX}{session_suffix}"
             
-            # Check if session exists locally or on the selected remote server
-            all_sessions = list_tmux_sessions(server_manager if remote_server else None)
+            # Check if session exists and generate unique name if needed
             session_exists = False
-            
             if remote_server:
                 if remote_server.name in all_sessions and session_name in all_sessions[remote_server.name]:
                     session_exists = True
@@ -978,8 +1096,26 @@ def create_bulk_sessions(model, args, config):
                 session_exists = True
                 
             if session_exists:
-                print(f"Skipping - session already exists: {session_name}")
-                continue
+                # Generate unique name with suffix
+                counter = 1
+                while True:
+                    new_suffix = f"{session_suffix}-{counter}"
+                    new_name = f"{SESSION_PREFIX}{new_suffix}"
+                    
+                    exists = False
+                    if remote_server:
+                        if remote_server.name in all_sessions and new_name in all_sessions[remote_server.name]:
+                            exists = True
+                    elif "local" in all_sessions and new_name in all_sessions["local"]:
+                        exists = True
+                    
+                    if not exists:
+                        print(f"Session '{session_name}' already exists, using unique name: {new_name}")
+                        session_suffix = new_suffix
+                        session_name = new_name
+                        break
+                    
+                    counter += 1
 
             full_text = f"{shared_guidance}\n\n{problem['text']}"
             
