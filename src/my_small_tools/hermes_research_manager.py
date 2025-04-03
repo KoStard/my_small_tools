@@ -400,7 +400,7 @@ def save_research_to_markdown(session_suffix, research_text, model, files=None):
     try:
         with open(filepath, 'w') as f:
             f.write(content)
-        print(f"Research saved to: {filepath}")
+        print(f"Research request saved to: {filepath}")
         return filepath
     except Exception as e:
         print(f"Error saving research to markdown: {e}")
