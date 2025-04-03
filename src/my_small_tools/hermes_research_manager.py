@@ -891,30 +891,43 @@ def delete_sessions_interactive(server_manager=None):
     Args:
         server_manager: Optional RemoteServerManager to delete sessions on remote servers
     """
+    print("\n--- Delete Sessions ---")
+    print("Fetching active sessions (this may take a moment)...")
+    
+    # Get all sessions (local and remote) once at the beginning
+    all_sessions = list_tmux_sessions(server_manager)
+    
+    # Flatten sessions into a list with location info
+    session_list = []
+    for location, sessions in all_sessions.items():
+        for session in sessions:
+            # For local sessions, location is "local"
+            # For remote sessions, location is the server name
+            session_list.append((session, location))
+    
+    if not session_list:
+        print("No active hermes research sessions found.")
+        return # Go back to main menu
+    
+    # Keep track of deleted sessions to update the list in memory
+    deleted_sessions = set()
+    
     while True:
-        print("\n--- Delete Sessions ---")
+        # Filter out deleted sessions from the display list
+        current_sessions = [(session, location) for session, location in session_list 
+                           if (session, location) not in deleted_sessions]
         
-        # Get all sessions (local and remote)
-        all_sessions = list_tmux_sessions(server_manager)
-        
-        # Flatten sessions into a list with location info
-        session_list = []
-        for location, sessions in all_sessions.items():
-            for session in sessions:
-                # For local sessions, location is "local"
-                # For remote sessions, location is the server name
-                session_list.append((session, location))
-        
-        if not session_list:
-            print("No active hermes research sessions found.")
+        if not current_sessions:
+            print("All sessions have been deleted.")
             return # Go back to main menu
-
-        print("Active sessions:")
+        
+        print("\nActive sessions:")
         print("  0: Delete ALL listed sessions")
-        for i, (session, location) in enumerate(session_list):
+        for i, (session, location) in enumerate(current_sessions):
             location_str = "local" if location == "local" else f"on {location}"
             print(f"  {i+1}: {session} ({location_str})")
         print("\nEnter the number of the session to delete.")
+        print("Enter 'r' to refresh the session list.")
         print("Enter 'q', 'quit', or '-1' to go back to the main menu.")
 
         try:
@@ -926,72 +939,74 @@ def delete_sessions_interactive(server_manager=None):
         if choice in ('q', 'quit', '-1'):
             print("Returning to main menu.")
             return
+        
+        if choice == 'r':
+            print("Refreshing session list...")
+            return delete_sessions_interactive(server_manager)  # Restart with fresh data
 
         try:
             index = int(choice)
         except ValueError:
-            print(f"Invalid input '{choice}'. Please enter a number, 'q', 'quit', or '-1'.")
+            print(f"Invalid input '{choice}'. Please enter a number, 'r', 'q', 'quit', or '-1'.")
             continue # Ask again
 
         if index == 0:
             # Delete All
-            confirm = prompt(f"Are you sure you want to delete ALL {len(session_list)} sessions? (yes/no): ").lower().strip()
+            confirm = prompt(f"Are you sure you want to delete ALL {len(current_sessions)} sessions? (yes/no): ").lower().strip()
             if confirm == 'yes':
                 print("Deleting all sessions...")
                 all_deleted = True
                 
-                # Delete local sessions first
-                local_sessions = all_sessions.get("local", [])
-                for session in local_sessions:
-                    if not delete_tmux_session(session):
-                        all_deleted = False
-                
-                # Delete remote sessions
-                if server_manager:
-                    for server_name, sessions in all_sessions.items():
-                        if server_name == "local":
-                            continue
-                        
-                        server = server_manager.get_server(server_name)
+                # Process each session in the current list
+                for session, location in current_sessions:
+                    if location == "local":
+                        if not delete_tmux_session(session):
+                            all_deleted = False
+                        else:
+                            deleted_sessions.add((session, location))
+                    else:
+                        server = server_manager.get_server(location)
                         if not server:
-                            print(f"Error: Server '{server_name}' not found.")
+                            print(f"Error: Server '{location}' not found.")
                             all_deleted = False
                             continue
                         
-                        for session in sessions:
-                            if not delete_tmux_session(session, server):
-                                all_deleted = False
+                        if not delete_tmux_session(session, server):
+                            all_deleted = False
+                        else:
+                            deleted_sessions.add((session, location))
                 
                 if all_deleted:
                     print("All sessions deleted.")
+                    return # Go back to main menu after deleting all
                 else:
                     print("Attempted to delete all sessions, but some errors occurred.")
-                return # Go back to main menu after deleting all
             else:
                 print("Deletion cancelled.")
-                continue # Ask again
-        elif 1 <= index <= len(session_list):
+        elif 1 <= index <= len(current_sessions):
             # Delete specific session
-            session_to_delete, location = session_list[index - 1]
+            session_to_delete, location = current_sessions[index - 1]
             location_str = "local" if location == "local" else f"on {location}"
             confirm = prompt(f"Are you sure you want to delete session '{session_to_delete}' {location_str}? (yes/no): ").lower().strip()
             
             if confirm == 'yes':
+                success = False
                 if location == "local":
-                    delete_tmux_session(session_to_delete)
+                    success = delete_tmux_session(session_to_delete)
                 else:
                     server = server_manager.get_server(location)
                     if server:
-                        delete_tmux_session(session_to_delete, server)
+                        success = delete_tmux_session(session_to_delete, server)
                     else:
                         print(f"Error: Server '{location}' not found.")
-                # Loop continues, will refresh the list
+                
+                if success:
+                    deleted_sessions.add((session_to_delete, location))
+                    print(f"Session '{session_to_delete}' deleted.")
             else:
                 print("Deletion cancelled.")
-            # Continue loop to show updated list or let user choose another
         else:
-            print(f"Invalid index '{index}'. Please enter a number between 0 and {len(session_list)}.")
-            # Continue loop
+            print(f"Invalid index '{index}'. Please enter a number between 0 and {len(current_sessions)}.")
 
 
 def create_bulk_sessions(model, args, config):
