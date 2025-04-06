@@ -10,6 +10,7 @@ from prompt_toolkit import prompt
 # Import our modules
 from my_small_tools.remote_server import RemoteServer, RemoteServerManager
 from my_small_tools.config_manager import ConfigManager
+from my_small_tools.ui.menu_manager import MenuManager
 
 # Configuration
 SESSION_PREFIX = "hermes-research-"
@@ -608,31 +609,14 @@ def select_remote_server(server_manager):
         return None
     
     servers = server_manager.get_all_servers()
-    print("\nWhere do you want to run this research?")
-    print("1: Local machine")
-    for i, server in enumerate(servers, 2):
-        print(f"{i}: {server}")
+    options = ["Local machine"] + [str(server) for server in servers]
     
-    while True:
-        try:
-            choice = prompt("Choice [1]: ").strip()
-            if not choice:
-                return None
-            
-            index = int(choice)
-            if index == 1:
-                return None
-            elif 2 <= index <= len(servers) + 1:
-                return servers[index - 2]
-            else:
-                print(f"Invalid choice: {choice}")
-                continue
-        except ValueError:
-            print(f"Invalid input: {choice}")
-            continue
-        except KeyboardInterrupt:
-            print("\nSelection cancelled.")
-            raise
+    index = MenuManager.selection_menu("Select Server", options)
+    
+    if index <= 0:  # -1 (cancel) or 0 (local)
+        return None
+    else:
+        return servers[index - 1]  # Adjust for "Local machine" option
 
 def create_new_session(model, args, config):
     """Guides the user through creating a new hermes research session."""
@@ -1270,53 +1254,30 @@ def run_interactive_menu(args):
         
         # If still no model, prompt the user
         if not model:
-            model = prompt("Enter Hermes model to use: ")
-            if not model:
-                print("No model specified. Exiting.")
+            try:
+                model = MenuManager.text_prompt("Enter Hermes model to use: ")
+                if not model:
+                    print("No model specified. Exiting.")
+                    return
+            except KeyboardInterrupt:
+                print("\nExiting.")
                 return
     
-    while True:
-        try:
-            print("\n--- Hermes Research Manager ---")
-            print("1: Create New Session")
-            print("2: Create Bulk Sessions")
-            print("3: List Active Sessions")
-            print("4: Delete Session(s)")
-            print("5: Exit")
-
-            choice = prompt("Choose an action (1-5): ")
-
-            if choice == "1":
-                try:
-                    create_new_session(model, args, config)
-                except KeyboardInterrupt:
-                    print("\nOperation cancelled. Returning to main menu.")
-            elif choice == "2":
-                try:
-                    create_bulk_sessions(model, args, config)
-                except KeyboardInterrupt:
-                    print("\nOperation cancelled. Returning to main menu.")
-            elif choice == "3":
-                display_sessions(server_manager)
-            elif choice == "4":
-                try:
-                    delete_sessions_interactive(server_manager)
-                except KeyboardInterrupt:
-                    print("\nOperation cancelled. Returning to main menu.")
-            elif choice == "5":
-                break
-            else:
-                print("Invalid choice, please enter 1-5.")
-        except KeyboardInterrupt:
-            print("\nPress Ctrl+C again to exit or wait to return to menu...")
-            try:
-                # Small delay to allow second Ctrl+C to exit
-                import time
-                time.sleep(1)
-            except KeyboardInterrupt:
-                print("\nExiting...")
-                break
-
+    # Define menu options and their handlers
+    menu_options = {
+        "Create New Session": lambda: create_new_session(model, args, config),
+        "Create Bulk Sessions": lambda: create_bulk_sessions(model, args, config),
+        "List Active Sessions": lambda: display_sessions(server_manager),
+        "Delete Session(s)": lambda: delete_sessions_interactive(server_manager)
+    }
+    
+    # Start the main menu loop
+    try:
+        MenuManager.action_menu("Hermes Research Manager", menu_options)
+    except KeyboardInterrupt:
+        # Handle Ctrl+C at the top level
+        print("\nExiting...")
+    
     print("\nExiting.")
 
 def main():
