@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 import argparse
-import configparser
 import datetime
 import json
 import os
@@ -10,8 +9,9 @@ import uuid
 from prompt_toolkit import prompt
 from typing import Dict, List, Optional, Tuple, Any
 
-# Import our remote server module
+# Import our modules
 from my_small_tools.remote_server import RemoteServer, RemoteServerManager
+from my_small_tools.config_manager import ConfigManager
 
 # Configuration
 SESSION_PREFIX = "hermes-research-"
@@ -25,49 +25,15 @@ DEFAULT_CONFIG = {
     "remote_servers": {}
 }
 
-def load_config():
-    """Load configuration from file or create default if it doesn't exist."""
-    config = configparser.ConfigParser()
-    
-    # Set default config
-    for section, options in DEFAULT_CONFIG.items():
-        if not config.has_section(section):
-            config.add_section(section)
-        for option, value in options.items():
-            if isinstance(value, dict):
-                # For nested dictionaries (like remote_servers), store as JSON
-                config.set(section, option, json.dumps(value))
-            else:
-                config.set(section, option, value)
-    
-    # Create config directory if it doesn't exist
-    if not os.path.exists(CONFIG_DIR):
-        os.makedirs(CONFIG_DIR)
-    
-    # Load existing config if it exists
-    if os.path.exists(CONFIG_FILE):
-        config.read(CONFIG_FILE)
-    else:
-        # Create default config file
-        with open(CONFIG_FILE, 'w') as f:
-            config.write(f)
-        print(f"Created default configuration file at {CONFIG_FILE}")
-    
-    return config
+# Initialize config manager
+config_manager = ConfigManager(CONFIG_DIR, CONFIG_FILE, DEFAULT_CONFIG)
 
-def save_config(config):
-    """Save configuration to file."""
-    with open(CONFIG_FILE, 'w') as f:
-        config.write(f)
-    print(f"Configuration saved to {CONFIG_FILE}")
-
-def get_remote_servers(config):
+def get_remote_servers():
     """Load remote servers from config."""
     server_manager = RemoteServerManager()
     
     try:
-        servers_json = config.get('general', 'remote_servers', fallback='{}')
-        servers_dict = json.loads(servers_json)
+        servers_dict = config_manager.get_json('general', 'remote_servers', {})
         
         for name, server_config in servers_dict.items():
             server = RemoteServer(
@@ -82,11 +48,11 @@ def get_remote_servers(config):
     
     return server_manager
 
-def save_remote_servers(config, server_manager):
+def save_remote_servers(server_manager):
     """Save remote servers to config."""
     servers_dict = server_manager.to_dict()
-    config.set('general', 'remote_servers', json.dumps(servers_dict))
-    save_config(config)
+    config_manager.set_json('general', 'remote_servers', servers_dict)
+    config_manager.save()
 
 def parse_args():
     """Parse command line arguments."""
