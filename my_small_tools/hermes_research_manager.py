@@ -12,6 +12,7 @@ from my_small_tools.remote_server import RemoteServer, RemoteServerManager
 from my_small_tools.config_manager import ConfigManager
 from my_small_tools.ui.menu_manager import MenuManager
 from my_small_tools.session_manager import SessionManager
+from my_small_tools.research_manager import ResearchManager
 
 # Configuration
 SESSION_PREFIX = "hermes-research-"
@@ -139,8 +140,9 @@ def parse_args():
     
     return args
 
-# Session Manager
+# Initialize managers
 session_manager = SessionManager(SESSION_PREFIX)
+research_manager = ResearchManager(SESSION_PREFIX, config_manager, session_manager)
 
 def create_tmux_session(session_name, config, remote_server=None):
     """Creates a new detached tmux session using the session manager."""
@@ -160,285 +162,16 @@ def list_tmux_sessions(server_manager=None):
 
 def save_research_to_markdown(session_suffix, research_text, model, files=None):
     """Save research request to a markdown file with frontmatter."""
-    research_dir = config_manager.get('general', 'research_directory', fallback='')
-    
-    if not research_dir:
-        print("Warning: No research directory configured. Skipping markdown save.")
-        return None
-    
-    if not os.path.isdir(research_dir):
-        try:
-            os.makedirs(research_dir)
-            print(f"Created research directory: {research_dir}")
-        except Exception as e:
-            print(f"Error creating research directory: {e}")
-            return None
-    
-    # Create research-files subdirectory
-    research_files_dir = os.path.join(research_dir, "research-files")
-    if not os.path.isdir(research_files_dir):
-        try:
-            os.makedirs(research_files_dir)
-            print(f"Created research files directory: {research_files_dir}")
-        except Exception as e:
-            print(f"Error creating research files directory: {e}")
-            return None
-    
-    # Format date for filename
-    date_str = datetime.datetime.now().strftime("%Y-%m-%d")
-    filename = f"{date_str}-{session_suffix}.md"
-    filepath = os.path.join(research_files_dir, filename)
-    
-    # Create frontmatter and content
-    frontmatter = "---\n"
-    frontmatter += f"title: {session_suffix}\n"
-    frontmatter += f"date: {datetime.datetime.now().isoformat()}\n"
-    frontmatter += f"model: {model}\n"
-    if files:
-        frontmatter += "files:\n"
-        for file in files:
-            frontmatter += f"  - {file}\n"
-    frontmatter += "---\n\n"
-    
-    content = frontmatter + research_text
-    
-    try:
-        with open(filepath, 'w') as f:
-            f.write(content)
-        print(f"Research request saved to: {filepath}")
-        return filepath
-    except Exception as e:
-        print(f"Error saving research to markdown: {e}")
-        return None
+    return research_manager.save_research_to_markdown(session_suffix, research_text, model, files)
 
 def parse_markdown_research(filepath):
     """Parse a markdown file with frontmatter to extract research details."""
-    try:
-        with open(filepath, 'r') as f:
-            content = f.read()
-        
-        # Extract frontmatter
-        if content.startswith('---'):
-            _, frontmatter, body = content.split('---', 2)
-            
-            # Parse frontmatter
-            metadata = {}
-            for line in frontmatter.strip().split('\n'):
-                if ':' in line:
-                    key, value = line.split(':', 1)
-                    key = key.strip()
-                    value = value.strip()
-                    
-                    if key == 'files':
-                        # Files will be handled separately
-                        continue
-                    elif key == 'title':
-                        metadata['session_suffix'] = value
-                    else:
-                        metadata[key] = value
-            
-            # Parse files list
-            files = []
-            in_files = False
-            for line in frontmatter.strip().split('\n'):
-                if line.startswith('files:'):
-                    in_files = True
-                    continue
-                if in_files and line.strip().startswith('- '):
-                    files.append(line.strip()[2:])
-                elif in_files and not line.strip().startswith('  '):
-                    in_files = False
-            
-            metadata['files'] = files
-            metadata['research_text'] = body.strip()
-            
-            return metadata
-        else:
-            print(f"Error: {filepath} does not contain valid frontmatter")
-            return None
-    except Exception as e:
-        print(f"Error parsing markdown file: {e}")
-        return None
+    return research_manager.parse_markdown_research(filepath)
 
 def run_research_from_file(filepath, override_model=None):
     """Run a research session from a saved markdown file."""
-    config = config_manager
     server_manager = get_remote_servers()
-    
-    # Check if filepath is relative to research directory
-    if not os.path.isabs(filepath):
-        research_dir = config.get('general', 'research_directory', fallback='')
-        if research_dir:
-            # Try in research-files subdirectory first
-            research_files_path = os.path.join(research_dir, "research-files", filepath)
-            if os.path.exists(research_files_path):
-                filepath = research_files_path
-            else:
-                # Try in main research directory
-                research_path = os.path.join(research_dir, filepath)
-                if os.path.exists(research_path):
-                    filepath = research_path
-    
-    if not os.path.exists(filepath):
-        print(f"Error: File not found: {filepath}")
-        return False
-    
-    # Parse the markdown file
-    metadata = parse_markdown_research(filepath)
-    if not metadata:
-        return False
-    
-    # Extract details
-    session_suffix = metadata.get('session_suffix')
-    research_text = metadata.get('research_text')
-    model = override_model or metadata.get('model')
-    files = metadata.get('files', [])
-    
-    if not session_suffix or not research_text or not model:
-        print(f"Error: Missing required metadata in {filepath}")
-        return False
-    
-    # Select remote server or local
-    remote_server = None
-    if server_manager and server_manager.get_all_servers():
-        try:
-            remote_server = select_remote_server(server_manager)
-        except KeyboardInterrupt:
-            print("\nServer selection cancelled.")
-            return False
-    
-    # Create session
-    original_session_suffix = session_suffix
-    session_name = f"{SESSION_PREFIX}{session_suffix}"
-    
-    # Check if session exists locally or on the selected remote server
-    all_sessions = list_tmux_sessions(server_manager if remote_server else None)
-    session_exists = False
-    
-    if remote_server:
-        if remote_server.name in all_sessions and session_name in all_sessions[remote_server.name]:
-            session_exists = True
-    elif "local" in all_sessions and session_name in all_sessions["local"]:
-        session_exists = True
-        
-    if session_exists:
-        print(f"\nA tmux session named '{session_name}' already exists.")
-        print("Options:")
-        print("1: Generate a unique name automatically")
-        print("2: Connect to the existing session")
-        print("3: Try a different file")
-        
-        try:
-            choice = prompt("Choose an option (1-3): ").strip()
-            
-            if choice == "1":
-                # Generate unique name with suffix
-                counter = 1
-                while True:
-                    new_suffix = f"{session_suffix}-{counter}"
-                    new_name = f"{SESSION_PREFIX}{new_suffix}"
-                    
-                    exists = False
-                    if remote_server:
-                        if remote_server.name in all_sessions and new_name in all_sessions[remote_server.name]:
-                            exists = True
-                    elif "local" in all_sessions and new_name in all_sessions["local"]:
-                        exists = True
-                    
-                    if not exists:
-                        print(f"Using unique name: {new_name}")
-                        session_suffix = new_suffix
-                        session_name = new_name
-                        break
-                    
-                    counter += 1
-            elif choice == "2":
-                # Connect to existing session
-                location = f"on {remote_server.name}" if remote_server else "locally"
-                print(f"\nExisting session '{session_name}' {location}.")
-                
-                if remote_server:
-                    print(f"To connect to the remote session:")
-                    print(f"  1. SSH to {remote_server.username}@{remote_server.hostname}")
-                    print(f"  2. Run: tmux attach -t {session_name}")
-                elif 'TMUX' in os.environ:
-                    print(f"Since you're already in a tmux session, switch to it with: tmux switch-client -t {session_name}")
-                    print(f"Or press Ctrl+B S to interactively select and switch to the session")
-                else:
-                    print(f"Attach to it with: tmux attach -t {session_name}")
-                return True
-            elif choice == "3":
-                print("Operation cancelled. Please try with a different file.")
-                return False
-            else:
-                print("Invalid choice. Operation cancelled.")
-                return False
-        except KeyboardInterrupt:
-            print("\nOperation cancelled.")
-            return False
-    
-    # Process files for remote server if needed
-    remote_files = []
-    if remote_server and files:
-        success, remote_paths, message = remote_server.transfer_files(files)
-        if success and remote_paths:
-            remote_files = remote_paths
-        else:
-            print(f"Warning: {message}")
-            # Ask if user wants to continue without files
-            if files:
-                confirm = prompt("Continue without files? (yes/no): ").lower().strip()
-                if confirm != 'yes':
-                    print("Session creation cancelled.")
-                    return False
-    
-    # Build command
-    research_text_processed = research_text.replace('\"', '\\\"')
-    # Ask for budget
-    budget = prompt("Enter budget (number of message cycles, press Enter for no limit): ").strip()
-            
-    hermes_command = [
-        "hermes", "chat",
-        "--model", model,
-        "--deep-research", session_suffix,
-        "--text", research_text_processed
-    ]
-            
-    if budget and budget.isdigit():
-        hermes_command.extend(["--set_deep_research_budget", budget])
-    
-    # Add files
-    if remote_server:
-        for file in remote_files:
-            hermes_command.extend(["--textual_file", file])
-    else:
-        for file in files:
-            if os.path.exists(file):
-                hermes_command.extend(["--textual_file", file])
-            else:
-                print(f"Warning: File not found: {file}")
-    
-    if create_tmux_session(session_name, config, remote_server):
-        run_command_in_tmux(session_name, hermes_command, remote_server)
-        
-        location = f"on {remote_server.name}" if remote_server else "locally"
-        print(f"\nSession '{session_name}' created {location} and hermes command sent.")
-        
-        # Provide different instructions based on whether user is already in tmux
-        # and whether the session is local or remote
-        if remote_server:
-            print(f"To connect to the remote session:")
-            print(f"  1. SSH to {remote_server.username}@{remote_server.hostname}")
-            print(f"  2. Run: tmux attach -t {session_name}")
-        elif 'TMUX' in os.environ:
-            print(f"Since you're already in a tmux session, switch to it with: tmux switch-client -t {session_name}")
-            print(f"Or press Ctrl+B S to interactively select and switch to the session")
-            print(f"Or you can detach from current session with Ctrl+B d, then attach with: tmux attach -t {session_name}")
-        else:
-            print(f"Attach to it with: tmux attach -t {session_name}")
-        return True
-    
-    return False
+    return research_manager.run_research_from_file(filepath, override_model, server_manager)
 
 def select_remote_server(server_manager):
     """Prompt user to select a remote server or use local.
@@ -461,170 +194,8 @@ def select_remote_server(server_manager):
 
 def create_new_session(model, args, config):
     """Guides the user through creating a new hermes research session."""
-    # Load remote servers
     server_manager = get_remote_servers(config)
-    
-    try:
-        print("\n--- Create New Session ---")
-        session_suffix = prompt("Enter a short name for this research session (e.g., 'topic-analysis'): ")
-
-        if not session_suffix:
-            print("Session creation cancelled (no name provided).")
-            return
-    except KeyboardInterrupt:
-        print("\nSession creation cancelled.")
-        raise  # Re-raise to be caught by main menu handler
-
-    # Basic validation for session suffix (avoid spaces and special chars that tmux might not like)
-    if not all(c.isalnum() or c in ('-', '_') for c in session_suffix) or ' ' in session_suffix:
-         print(f"Error: Session name '{session_suffix}' should only contain letters, numbers, dashes or underscores.")
-         return
-
-    # We'll check for uniqueness after selecting the host
-    original_session_suffix = session_suffix
-
-    try:
-        print("\nEnter the multi-line research text (Press Meta+Enter or Esc then Enter to finish):")
-        # Use prompt with multiline=True for research text input
-        research_text = prompt("Research Text> ", multiline=True)
-
-        if not research_text:
-            print("No research text provided. Session creation cancelled.")
-            return
-    except KeyboardInterrupt:
-        print("\nResearch text input cancelled.")
-        raise  # Re-raise to be caught by main menu handler
-
-    # Select remote server or local
-    remote_server = None
-    if server_manager and server_manager.get_all_servers():
-        try:
-            remote_server = select_remote_server(server_manager)
-        except KeyboardInterrupt:
-            print("\nServer selection cancelled.")
-            raise  # Re-raise to be caught by main menu handler
-    
-    # Now check if session exists on the selected host
-    session_name = f"{SESSION_PREFIX}{session_suffix}"
-    all_sessions = list_tmux_sessions(server_manager if remote_server else None)
-    
-    session_exists = False
-    if remote_server:
-        if remote_server.name in all_sessions and session_name in all_sessions[remote_server.name]:
-            session_exists = True
-    elif "local" in all_sessions and session_name in all_sessions["local"]:
-        session_exists = True
-    
-    if session_exists:
-        print(f"\nA tmux session named '{session_name}' already exists.")
-        print("Options:")
-        print("1: Generate a unique name automatically")
-        print("2: Connect to the existing session")
-        print("3: Try a different name")
-        
-        try:
-            choice = prompt("Choose an option (1-3): ").strip()
-            
-            if choice == "1":
-                # Generate unique name with suffix
-                counter = 1
-                while True:
-                    new_suffix = f"{session_suffix}-{counter}"
-                    new_name = f"{SESSION_PREFIX}{new_suffix}"
-                    
-                    exists = False
-                    if remote_server:
-                        if remote_server.name in all_sessions and new_name in all_sessions[remote_server.name]:
-                            exists = True
-                    elif "local" in all_sessions and new_name in all_sessions["local"]:
-                        exists = True
-                    
-                    if not exists:
-                        print(f"Using unique name: {new_name}")
-                        session_suffix = new_suffix
-                        session_name = new_name
-                        break
-                    
-                    counter += 1
-            elif choice == "2":
-                # Connect to existing session
-                location = f"on {remote_server.name}" if remote_server else "locally"
-                print(f"\nExisting session '{session_name}' {location}.")
-                
-                if remote_server:
-                    print(f"To connect to the remote session:")
-                    print(f"  1. SSH to {remote_server.username}@{remote_server.hostname}")
-                    print(f"  2. Run: tmux attach -t {session_name}")
-                elif 'TMUX' in os.environ:
-                    print(f"Since you're already in a tmux session, switch to it with: tmux switch-client -t {session_name}")
-                    print(f"Or press Ctrl+B S to interactively select and switch to the session")
-                else:
-                    print(f"Attach to it with: tmux attach -t {session_name}")
-                return
-            elif choice == "3":
-                print("Returning to main menu. Please try again with a different name.")
-                return
-            else:
-                print("Invalid choice. Returning to main menu.")
-                return
-        except KeyboardInterrupt:
-            print("\nOperation cancelled. Returning to main menu.")
-            return
-    
-    # Save research to markdown file (always save locally)
-    save_research_to_markdown(session_suffix, research_text, model, args.files)
-
-    # Process files for remote server if needed
-    remote_files = []
-    if remote_server and args.files:
-        success, remote_paths, message = remote_server.transfer_files(args.files)
-        if success and remote_paths:
-            remote_files = remote_paths
-        else:
-            print(f"Warning: {message}")
-            # Ask if user wants to continue without files
-            if args.files:
-                confirm = prompt("Continue without files? (yes/no): ").lower().strip()
-                if confirm != 'yes':
-                    print("Session creation cancelled.")
-                    return
-
-    # Construct the hermes command carefully, quoting the text
-    research_text_processed = research_text.replace('\"', '\\\"')
-    # Build command as list to avoid shell interpretation issues
-    hermes_command = [
-        "hermes", "chat",
-        "--model", model,
-        "--deep-research", session_suffix,
-        "--text", research_text_processed
-    ]
-    
-    # Add files as --textual_file arguments
-    if remote_server:
-        for file in remote_files:
-            hermes_command.extend(["--textual_file", file])
-    else:
-        for file in args.files:
-            hermes_command.extend(["--textual_file", file])
-
-    if create_tmux_session(session_name, config, remote_server):
-        run_command_in_tmux(session_name, hermes_command, remote_server)
-        
-        location = f"on {remote_server.name}" if remote_server else "locally"
-        print(f"\nSession '{session_name}' created {location} and hermes command sent.")
-        
-        # Provide different instructions based on whether user is already in tmux
-        # and whether the session is local or remote
-        if remote_server:
-            print(f"To connect to the remote session:")
-            print(f"  1. SSH to {remote_server.username}@{remote_server.hostname}")
-            print(f"  2. Run: tmux attach -t {session_name}")
-        elif 'TMUX' in os.environ:
-            print(f"Since you're already in a tmux session, switch to it with: tmux switch-client -t {session_name}")
-            print(f"Or press Ctrl+B S to interactively select and switch to the session")
-            print(f"Or you can detach from current session with Ctrl+B d, then attach with: tmux attach -t {session_name}")
-        else:
-            print(f"Attach to it with: tmux attach -t {session_name}")
+    research_manager.create_new_session(model, args, server_manager)
 
 def display_sessions(server_manager=None):
     """Displays the list of active hermes research sessions using the session manager."""
@@ -757,165 +328,8 @@ def delete_sessions_interactive(server_manager=None):
 
 def create_bulk_sessions(model, args, config):
     """Creates multiple sessions from bulk input."""
-    # Load remote servers
     server_manager = get_remote_servers(config)
-    
-    try:
-        print("\n--- Bulk Session Creation ---")
-        print("First, enter the shared research guidance (what to do with each problem):")
-        shared_guidance = prompt("Shared Guidance> ", multiline=True)
-        
-        if not shared_guidance:
-            print("No shared guidance provided. Bulk creation cancelled.")
-            return
-
-        print("\nNow enter the problem-specific inputs in this format:")
-        print("problem-specific text (1 line)")
-        print("session-name (1 line)")
-        print("(empty line)")
-        print("...repeat for each problem...")
-        bulk_input = prompt("Problem Inputs> ", multiline=True)
-
-        if not bulk_input:
-            print("No problem inputs provided. Bulk creation cancelled.")
-            return
-
-        # Process the bulk input
-        problems = []
-        current_problem = None
-        for line in bulk_input.split('\n'):
-            line = line.strip()
-            if not line:
-                if current_problem:
-                    problems.append(current_problem)
-                    current_problem = None
-                continue
-            if current_problem is None:
-                current_problem = {'text': line}
-            else:
-                current_problem['name'] = line
-        if current_problem:
-            problems.append(current_problem)
-
-        if not problems:
-            print("No valid problems found in input.")
-            return
-
-        print(f"\nFound {len(problems)} problems to process:")
-        for i, problem in enumerate(problems, 1):
-            print(f"  {i}: {problem.get('name', 'unnamed')}")
-
-        # Select remote server or local
-        remote_server = None
-        if server_manager and server_manager.get_all_servers():
-            try:
-                remote_server = select_remote_server(server_manager)
-            except KeyboardInterrupt:
-                print("\nServer selection cancelled.")
-                raise  # Re-raise to be caught by main menu handler
-
-        confirm = prompt("Create these sessions? (yes/no): ").lower().strip()
-        if confirm != 'yes':
-            print("Bulk creation cancelled.")
-            return
-
-        # Process files for remote server if needed
-        remote_files = []
-        if remote_server and args.files:
-            success, remote_paths, message = remote_server.transfer_files(args.files)
-            if success and remote_paths:
-                remote_files = remote_paths
-            else:
-                print(f"Warning: {message}")
-                # Ask if user wants to continue without files
-                if args.files:
-                    confirm = prompt("Continue without files? (yes/no): ").lower().strip()
-                    if confirm != 'yes':
-                        print("Bulk creation cancelled.")
-                        return
-
-        # Get all sessions once to avoid repeated checks
-        all_sessions = list_tmux_sessions(server_manager if remote_server else None)
-        
-        # Create sessions
-        created_count = 0
-        for problem in problems:
-            if 'name' not in problem or 'text' not in problem:
-                print(f"Skipping malformed problem: {problem}")
-                continue
-
-            original_name = problem['name']
-            session_suffix = original_name
-            session_name = f"{SESSION_PREFIX}{session_suffix}"
-            
-            # Check if session exists and generate unique name if needed
-            session_exists = False
-            if remote_server:
-                if remote_server.name in all_sessions and session_name in all_sessions[remote_server.name]:
-                    session_exists = True
-            elif "local" in all_sessions and session_name in all_sessions["local"]:
-                session_exists = True
-                
-            if session_exists:
-                # Generate unique name with suffix
-                counter = 1
-                while True:
-                    new_suffix = f"{session_suffix}-{counter}"
-                    new_name = f"{SESSION_PREFIX}{new_suffix}"
-                    
-                    exists = False
-                    if remote_server:
-                        if remote_server.name in all_sessions and new_name in all_sessions[remote_server.name]:
-                            exists = True
-                    elif "local" in all_sessions and new_name in all_sessions["local"]:
-                        exists = True
-                    
-                    if not exists:
-                        print(f"Session '{session_name}' already exists, using unique name: {new_name}")
-                        session_suffix = new_suffix
-                        session_name = new_name
-                        break
-                    
-                    counter += 1
-
-            full_text = f"{shared_guidance}\n\n{problem['text']}"
-            
-            # Save research to markdown file (always save locally)
-            save_research_to_markdown(problem['name'], full_text, model, args.files)
-            
-            # Ask for budget once before processing all problems
-            if 'budget' not in locals():
-                budget = prompt("Enter budget for all sessions (number of message cycles, press Enter for no limit): ").strip()
-            
-            hermes_command = [
-                "hermes", "chat",
-                "--model", model,
-                "--deep-research", problem['name'],
-                "--text", full_text.replace('\"', '\\\"')
-            ]
-            
-            if budget and budget.isdigit():
-                hermes_command.extend(["--set_deep_research_budget", budget])
-            
-            # Add files as --textual_file arguments
-            if remote_server:
-                for file in remote_files:
-                    hermes_command.extend(["--textual_file", file])
-            else:
-                for file in args.files:
-                    hermes_command.extend(["--textual_file", file])
-
-            if create_tmux_session(session_name, config, remote_server):
-                run_command_in_tmux(session_name, hermes_command, remote_server)
-                created_count += 1
-                location = f"on {remote_server.name}" if remote_server else "locally"
-                print(f"Created session: {session_name} {location}")
-
-        print(f"\nSuccessfully created {created_count}/{len(problems)} sessions.")
-
-    except KeyboardInterrupt:
-        print("\nBulk creation cancelled.")
-        raise
+    research_manager.create_bulk_sessions(model, args, server_manager)
 
 def handle_config_commands(args):
     """Handle configuration-related commands."""
@@ -1058,9 +472,9 @@ def run_interactive_menu(args):
     
     # Define menu options and their handlers
     menu_options = {
-        "Create New Session": lambda: create_new_session(model, args, config),
-        "Create Bulk Sessions": lambda: create_bulk_sessions(model, args, config),
-        "List Active Sessions": lambda: display_sessions(server_manager),
+        "Create New Session": lambda: research_manager.create_new_session(model, args, server_manager),
+        "Create Bulk Sessions": lambda: research_manager.create_bulk_sessions(model, args, server_manager),
+        "List Active Sessions": lambda: session_manager.display_sessions(server_manager),
         "Delete Session(s)": lambda: delete_sessions_interactive(server_manager)
     }
     
@@ -1083,7 +497,8 @@ def main():
         if not os.path.exists(args.markdown_file):
             print(f"Error: File not found: {args.markdown_file}")
             sys.exit(1)
-        success = run_research_from_file(args.markdown_file, args.model)
+        server_manager = get_remote_servers()
+        success = research_manager.run_research_from_file(args.markdown_file, args.model, server_manager)
         sys.exit(0 if success else 1)
     else:  # 'run' command
         run_interactive_menu(args)
