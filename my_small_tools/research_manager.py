@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from my_small_tools.session_manager import SessionManager
 from my_small_tools.remote_server import RemoteServer, RemoteServerManager
 from my_small_tools.ui.menu_manager import MenuManager
+from my_small_tools.utils import resolve_filepath
 
 class ResearchManager:
     """Manages research sessions and related operations."""
@@ -633,23 +634,6 @@ class ResearchManager:
         return created_count > 0
         
     def _resolve_filepath(self, filepath: str) -> str:
-        """Resolve a potentially relative filepath.
-        
-        Returns:
-            The absolute path to the file
-        """
-        # Check if filepath is relative to research directory
-        if not os.path.isabs(filepath):
-            research_dir = self.config.get('general', 'research_directory', fallback='')
-            if research_dir:
-                # Try in research-files subdirectory first
-                research_files_path = os.path.join(research_dir, "research-files", filepath)
-                if os.path.exists(research_files_path):
-                    return research_files_path
-                
-                # Try in main research directory
-                research_path = os.path.join(research_dir, filepath)
-                if os.path.exists(research_path):
-                    return research_path
-        
-        return filepath
+        """Resolve a potentially relative filepath."""
+        research_dir = self.config.get('general', 'research_directory', fallback='')
+        return resolve_filepath(filepath, research_dir)

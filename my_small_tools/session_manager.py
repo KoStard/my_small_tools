@@ -9,6 +9,7 @@ from my_small_tools.remote_server import RemoteServer, RemoteServerManager
 class SessionManager:
     """Manages tmux sessions for both local and remote environments."""
     
+    
     def __init__(self, session_prefix: str):
         """Initialize the session manager.
         
@@ -234,6 +235,130 @@ class SessionManager:
             print("  1. SSH to the remote server")
             print("  2. Run: tmux attach -t <session_name>")
     
+    def delete_sessions_interactive(self, server_manager: Optional[RemoteServerManager] = None) -> None:
+        """Provides an interactive menu to delete sessions.
+        
+        Args:
+            server_manager: Optional RemoteServerManager to delete sessions on remote servers
+        """
+        print("\n--- Delete Sessions ---")
+        print("Fetching active sessions (this may take a moment)...")
+        
+        # Get all sessions (local and remote) once at the beginning
+        all_sessions = self.list_sessions(server_manager)
+        
+        # Flatten sessions into a list with location info
+        session_list = []
+        for location, sessions in all_sessions.items():
+            for session in sessions:
+                # For local sessions, location is "local"
+                # For remote sessions, location is the server name
+                session_list.append((session, location))
+        
+        if not session_list:
+            print("No active sessions found.")
+            return # Go back to main menu
+        
+        # Keep track of deleted sessions to update the list in memory
+        deleted_sessions = set()
+        
+        while True:
+            # Filter out deleted sessions from the display list
+            current_sessions = [(session, location) for session, location in session_list 
+                               if (session, location) not in deleted_sessions]
+            
+            if not current_sessions:
+                print("All sessions have been deleted.")
+                return # Go back to main menu
+            
+            print("\nActive sessions:")
+            print("  0: Delete ALL listed sessions")
+            for i, (session, location) in enumerate(current_sessions):
+                location_str = "local" if location == "local" else f"on {location}"
+                print(f"  {i+1}: {session} ({location_str})")
+            print("\nEnter the number of the session to delete.")
+            print("Enter 'r' to refresh the session list.")
+            print("Enter 'q', 'quit', or '-1' to go back to the main menu.")
+
+            try:
+                from prompt_toolkit import prompt
+                choice = prompt("Choice: ").lower().strip()
+            except KeyboardInterrupt:
+                print("\nOperation cancelled by user (Ctrl+C). Returning to main menu.")
+                return # Go back on Ctrl+C
+
+            if choice in ('q', 'quit', '-1'):
+                print("Returning to main menu.")
+                return
+            
+            if choice == 'r':
+                print("Refreshing session list...")
+                return self.delete_sessions_interactive(server_manager)  # Restart with fresh data
+
+            try:
+                index = int(choice)
+            except ValueError:
+                print(f"Invalid input '{choice}'. Please enter a number, 'r', 'q', 'quit', or '-1'.")
+                continue # Ask again
+
+            if index == 0:
+                # Delete All
+                from my_small_tools.ui.menu_manager import MenuManager
+                if MenuManager.confirm("Are you sure you want to delete ALL sessions?", default=False):
+                    print("Deleting all sessions...")
+                    all_deleted = True
+                    
+                    # Process each session in the current list
+                    for session, location in current_sessions:
+                        if location == "local":
+                            if not self.delete_session(session):
+                                all_deleted = False
+                            else:
+                                deleted_sessions.add((session, location))
+                        else:
+                            server = server_manager.get_server(location)
+                            if not server:
+                                print(f"Error: Server '{location}' not found.")
+                                all_deleted = False
+                                continue
+                            
+                            if not self.delete_session(session, server):
+                                all_deleted = False
+                            else:
+                                deleted_sessions.add((session, location))
+                    
+                    if all_deleted:
+                        print("All sessions deleted.")
+                        return # Go back to main menu after deleting all
+                    else:
+                        print("Attempted to delete all sessions, but some errors occurred.")
+                else:
+                    print("Deletion cancelled.")
+            elif 1 <= index <= len(current_sessions):
+                # Delete specific session
+                session_to_delete, location = current_sessions[index - 1]
+                location_str = "local" if location == "local" else f"on {location}"
+                
+                from my_small_tools.ui.menu_manager import MenuManager
+                if MenuManager.confirm(f"Delete session '{session_to_delete}' {location_str}?", default=False):
+                    success = False
+                    if location == "local":
+                        success = self.delete_session(session_to_delete)
+                    else:
+                        server = server_manager.get_server(location)
+                        if server:
+                            success = self.delete_session(session_to_delete, server)
+                        else:
+                            print(f"Error: Server '{location}' not found.")
+                    
+                    if success:
+                        deleted_sessions.add((session_to_delete, location))
+                        print(f"Session '{session_to_delete}' deleted.")
+                else:
+                    print("Deletion cancelled.")
+            else:
+                print(f"Invalid index '{index}'. Please enter a number between 0 and {len(current_sessions)}.")
+
     class _unset_tmux_env:
         """Context manager for temporarily unsetting the TMUX environment variable."""
         def __enter__(self):

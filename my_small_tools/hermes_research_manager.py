@@ -144,186 +144,6 @@ def parse_args():
 session_manager = SessionManager(SESSION_PREFIX)
 research_manager = ResearchManager(SESSION_PREFIX, config_manager, session_manager)
 
-def create_tmux_session(session_name, config, remote_server=None):
-    """Creates a new detached tmux session using the session manager."""
-    return session_manager.create_session(session_name, config, remote_server)
-
-def run_command_in_tmux(session_name, command, remote_server=None):
-    """Sends a command to a tmux session using the session manager."""
-    session_manager.run_command(session_name, command, remote_server)
-
-def delete_tmux_session(session_name, remote_server=None):
-    """Kills a specific tmux session using the session manager."""
-    return session_manager.delete_session(session_name, remote_server)
-
-def list_tmux_sessions(server_manager=None):
-    """Lists active tmux sessions using the session manager."""
-    return session_manager.list_sessions(server_manager)
-
-def save_research_to_markdown(session_suffix, research_text, model, files=None):
-    """Save research request to a markdown file with frontmatter."""
-    return research_manager.save_research_to_markdown(session_suffix, research_text, model, files)
-
-def parse_markdown_research(filepath):
-    """Parse a markdown file with frontmatter to extract research details."""
-    return research_manager.parse_markdown_research(filepath)
-
-def run_research_from_file(filepath, override_model=None):
-    """Run a research session from a saved markdown file."""
-    server_manager = get_remote_servers()
-    return research_manager.run_research_from_file(filepath, override_model, server_manager)
-
-def select_remote_server(server_manager):
-    """Prompt user to select a remote server or use local.
-    
-    Returns:
-        RemoteServer object or None for local
-    """
-    if not server_manager or not server_manager.get_all_servers():
-        return None
-    
-    servers = server_manager.get_all_servers()
-    options = ["Local machine"] + [str(server) for server in servers]
-    
-    index = MenuManager.selection_menu("Select Server", options)
-    
-    if index <= 0:  # -1 (cancel) or 0 (local)
-        return None
-    else:
-        return servers[index - 1]  # Adjust for "Local machine" option
-
-def create_new_session(model, args, config):
-    """Guides the user through creating a new hermes research session."""
-    server_manager = get_remote_servers(config)
-    research_manager.create_new_session(model, args, server_manager)
-
-def display_sessions(server_manager=None):
-    """Displays the list of active hermes research sessions using the session manager."""
-    session_manager.display_sessions(server_manager)
-
-
-def delete_sessions_interactive(server_manager=None):
-    """Provides an interactive menu to delete sessions.
-    
-    Args:
-        server_manager: Optional RemoteServerManager to delete sessions on remote servers
-    """
-    print("\n--- Delete Sessions ---")
-    print("Fetching active sessions (this may take a moment)...")
-    
-    # Get all sessions (local and remote) once at the beginning
-    all_sessions = list_tmux_sessions(server_manager)
-    
-    # Flatten sessions into a list with location info
-    session_list = []
-    for location, sessions in all_sessions.items():
-        for session in sessions:
-            # For local sessions, location is "local"
-            # For remote sessions, location is the server name
-            session_list.append((session, location))
-    
-    if not session_list:
-        print("No active hermes research sessions found.")
-        return # Go back to main menu
-    
-    # Keep track of deleted sessions to update the list in memory
-    deleted_sessions = set()
-    
-    while True:
-        # Filter out deleted sessions from the display list
-        current_sessions = [(session, location) for session, location in session_list 
-                           if (session, location) not in deleted_sessions]
-        
-        if not current_sessions:
-            print("All sessions have been deleted.")
-            return # Go back to main menu
-        
-        print("\nActive sessions:")
-        print("  0: Delete ALL listed sessions")
-        for i, (session, location) in enumerate(current_sessions):
-            location_str = "local" if location == "local" else f"on {location}"
-            print(f"  {i+1}: {session} ({location_str})")
-        print("\nEnter the number of the session to delete.")
-        print("Enter 'r' to refresh the session list.")
-        print("Enter 'q', 'quit', or '-1' to go back to the main menu.")
-
-        try:
-            choice = prompt("Choice: ").lower().strip()
-        except KeyboardInterrupt:
-            print("\nOperation cancelled by user (Ctrl+C). Returning to main menu.")
-            return # Go back on Ctrl+C
-
-        if choice in ('q', 'quit', '-1'):
-            print("Returning to main menu.")
-            return
-        
-        if choice == 'r':
-            print("Refreshing session list...")
-            return delete_sessions_interactive(server_manager)  # Restart with fresh data
-
-        try:
-            index = int(choice)
-        except ValueError:
-            print(f"Invalid input '{choice}'. Please enter a number, 'r', 'q', 'quit', or '-1'.")
-            continue # Ask again
-
-        if index == 0:
-            # Delete All
-            confirm = prompt(f"Are you sure you want to delete ALL {len(current_sessions)} sessions? (yes/no): ").lower().strip()
-            if confirm == 'yes':
-                print("Deleting all sessions...")
-                all_deleted = True
-                
-                # Process each session in the current list
-                for session, location in current_sessions:
-                    if location == "local":
-                        if not delete_tmux_session(session):
-                            all_deleted = False
-                        else:
-                            deleted_sessions.add((session, location))
-                    else:
-                        server = server_manager.get_server(location)
-                        if not server:
-                            print(f"Error: Server '{location}' not found.")
-                            all_deleted = False
-                            continue
-                        
-                        if not delete_tmux_session(session, server):
-                            all_deleted = False
-                        else:
-                            deleted_sessions.add((session, location))
-                
-                if all_deleted:
-                    print("All sessions deleted.")
-                    return # Go back to main menu after deleting all
-                else:
-                    print("Attempted to delete all sessions, but some errors occurred.")
-            else:
-                print("Deletion cancelled.")
-        elif 1 <= index <= len(current_sessions):
-            # Delete specific session
-            session_to_delete, location = current_sessions[index - 1]
-            location_str = "local" if location == "local" else f"on {location}"
-            confirm = prompt(f"Are you sure you want to delete session '{session_to_delete}' {location_str}? (yes/no): ").lower().strip()
-            
-            if confirm == 'yes':
-                success = False
-                if location == "local":
-                    success = delete_tmux_session(session_to_delete)
-                else:
-                    server = server_manager.get_server(location)
-                    if server:
-                        success = delete_tmux_session(session_to_delete, server)
-                    else:
-                        print(f"Error: Server '{location}' not found.")
-                
-                if success:
-                    deleted_sessions.add((session_to_delete, location))
-                    print(f"Session '{session_to_delete}' deleted.")
-            else:
-                print("Deletion cancelled.")
-        else:
-            print(f"Invalid index '{index}'. Please enter a number between 0 and {len(current_sessions)}.")
 
 
 def create_bulk_sessions(model, args, config):
@@ -475,7 +295,7 @@ def run_interactive_menu(args):
         "Create New Session": lambda: research_manager.create_new_session(model, args, server_manager),
         "Create Bulk Sessions": lambda: research_manager.create_bulk_sessions(model, args, server_manager),
         "List Active Sessions": lambda: session_manager.display_sessions(server_manager),
-        "Delete Session(s)": lambda: delete_sessions_interactive(server_manager)
+        "Delete Session(s)": lambda: session_manager.delete_sessions_interactive(server_manager)
     }
     
     # Start the main menu loop
@@ -494,11 +314,19 @@ def main():
     if args.command == 'config':
         handle_config_commands(args)
     elif args.command == 'from-file':
-        if not os.path.exists(args.markdown_file):
-            print(f"Error: File not found: {args.markdown_file}")
+        # Use the utility function to resolve the filepath
+        from my_small_tools.utils import resolve_filepath
+        filepath = resolve_filepath(
+            args.markdown_file, 
+            config_manager.get('general', 'research_directory', fallback='')
+        )
+        
+        if not os.path.exists(filepath):
+            print(f"Error: File not found: {filepath}")
             sys.exit(1)
+            
         server_manager = get_remote_servers()
-        success = research_manager.run_research_from_file(args.markdown_file, args.model, server_manager)
+        success = research_manager.run_research_from_file(filepath, args.model, server_manager)
         sys.exit(0 if success else 1)
     else:  # 'run' command
         run_interactive_menu(args)
