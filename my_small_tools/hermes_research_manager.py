@@ -48,7 +48,7 @@ def get_remote_servers():
     
     return server_manager
 
-def save_remote_servers(server_manager):
+def save_remote_servers(server_manager, config=None):
     """Save remote servers to config."""
     servers_dict = server_manager.to_dict()
     config_manager.set_json('general', 'remote_servers', servers_dict)
@@ -320,8 +320,7 @@ def list_tmux_sessions(server_manager=None):
 
 def save_research_to_markdown(session_suffix, research_text, model, files=None):
     """Save research request to a markdown file with frontmatter."""
-    config = load_config()
-    research_dir = config.get('general', 'research_directory', fallback='')
+    research_dir = config_manager.get('general', 'research_directory', fallback='')
     
     if not research_dir:
         print("Warning: No research directory configured. Skipping markdown save.")
@@ -423,8 +422,8 @@ def parse_markdown_research(filepath):
 
 def run_research_from_file(filepath, override_model=None):
     """Run a research session from a saved markdown file."""
-    config = load_config()
-    server_manager = get_remote_servers(config)
+    config = config_manager
+    server_manager = get_remote_servers()
     
     # Check if filepath is relative to research directory
     if not os.path.isabs(filepath):
@@ -1145,7 +1144,7 @@ def create_bulk_sessions(model, args, config):
 
 def handle_config_commands(args):
     """Handle configuration-related commands."""
-    config = load_config()
+    config = config_manager
     
     if args.config_command == 'set-directory':
         directory = os.path.abspath(os.path.expanduser(args.directory))
@@ -1154,13 +1153,13 @@ def handle_config_commands(args):
             return
         
         config.set('general', 'research_directory', directory)
-        save_config(config)
+        config.save()
         print(f"Default research directory set to: {directory}")
     
     elif args.config_command == 'set-model':
         model = args.model
         config.set('general', 'default_model', model)
-        save_config(config)
+        config.save()
         print(f"Default Hermes model set to: {model}")
     
     elif args.config_command == 'show':
@@ -1197,7 +1196,7 @@ def handle_config_commands(args):
 
 def handle_server_commands(args, config):
     """Handle remote server configuration commands."""
-    server_manager = get_remote_servers(config)
+    server_manager = get_remote_servers()
     
     if args.server_command == 'add':
         # Get research path (use local path as default if not specified)
@@ -1222,19 +1221,19 @@ def handle_server_commands(args, config):
         if success:
             print(f"Connection successful: {message}")
             server_manager.add_server(server)
-            save_remote_servers(config, server_manager)
+            save_remote_servers(server_manager)
             print(f"Added remote server: {server}")
         else:
             print(f"Connection failed: {message}")
             confirm = prompt("Add server anyway? (yes/no): ").lower().strip()
             if confirm == 'yes':
                 server_manager.add_server(server)
-                save_remote_servers(config, server_manager)
+                save_remote_servers(server_manager)
                 print(f"Added remote server: {server}")
     
     elif args.server_command == 'remove':
         if server_manager.remove_server(args.name):
-            save_remote_servers(config, server_manager)
+            save_remote_servers(server_manager)
             print(f"Removed remote server: {args.name}")
         else:
             print(f"Error: Server '{args.name}' not found.")
@@ -1262,8 +1261,8 @@ def handle_server_commands(args, config):
 
 def run_interactive_menu(args):
     """Run the interactive menu for the research manager."""
-    config = load_config()
-    server_manager = get_remote_servers(config)
+    config = config_manager
+    server_manager = get_remote_servers()
     
     # Get model from args, config, or prompt
     model = args.model
