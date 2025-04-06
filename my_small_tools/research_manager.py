@@ -181,6 +181,10 @@ class ResearchManager:
             if not research_text:
                 print("No research text provided. Session creation cancelled.")
                 return False
+                
+            # Ask for budget right after research text
+            budget = MenuManager.text_prompt(
+                "Enter budget (number of message cycles, press Enter for no limit): ").strip()
         except KeyboardInterrupt:
             print("\nResearch text input cancelled.")
             return False
@@ -206,7 +210,7 @@ class ResearchManager:
 
         # Process files and create command
         success, command = self._prepare_hermes_command(
-            session_suffix, research_text, model, args.files, remote_server)
+            session_suffix, research_text, model, args.files, remote_server, budget)
         
         if not success:
             return False
@@ -254,6 +258,10 @@ class ResearchManager:
             if not bulk_input:
                 print("No problem inputs provided. Bulk creation cancelled.")
                 return False
+                
+            # Ask for budget before processing problems
+            budget = MenuManager.text_prompt(
+                "Enter budget for all sessions (number of message cycles, press Enter for no limit): ").strip()
 
             # Process the bulk input
             problems = self._parse_bulk_input(bulk_input)
@@ -291,10 +299,6 @@ class ResearchManager:
                     if args.files and not MenuManager.confirm("Continue without files?"):
                         print("Bulk creation cancelled.")
                         return False
-
-            # Ask for budget once before processing all problems
-            budget = MenuManager.text_prompt(
-                "Enter budget for all sessions (number of message cycles, press Enter for no limit): ").strip()
             
             # Get all sessions once to avoid repeated checks
             all_sessions = self.session_manager.list_sessions(
@@ -359,9 +363,13 @@ class ResearchManager:
         if not session_name:
             return False  # User cancelled or chose to use existing session
             
+        # Ask for budget
+        budget = MenuManager.text_prompt(
+            "Enter budget (number of message cycles, press Enter for no limit): ").strip()
+            
         # Process files and create command
         success, command = self._prepare_hermes_command(
-            session_suffix, research_text, model, files, remote_server)
+            session_suffix, research_text, model, files, remote_server, budget)
         
         if not success:
             return False
@@ -475,7 +483,8 @@ class ResearchManager:
 
     def _prepare_hermes_command(self, session_suffix: str, research_text: str, 
                                model: str, files: List[str], 
-                               remote_server: Optional[RemoteServer]) -> Tuple[bool, List[str]]:
+                               remote_server: Optional[RemoteServer], 
+                               budget: str = None) -> Tuple[bool, List[str]]:
         """Prepare the hermes command for a session.
         
         Returns:
@@ -496,11 +505,6 @@ class ResearchManager:
 
         # Process the research text
         research_text_processed = research_text.replace('\"', '\\\"')
-        
-        # Ask for budget if not provided
-        if 'budget' not in locals():
-            budget = MenuManager.text_prompt(
-                "Enter budget (number of message cycles, press Enter for no limit): ").strip()
                 
         # Build command
         hermes_command = [
