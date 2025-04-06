@@ -5,9 +5,7 @@ import json
 import os
 import subprocess
 import sys
-import uuid
 from prompt_toolkit import prompt
-from typing import Dict, List, Optional, Tuple, Any
 
 # Import our modules
 from my_small_tools.remote_server import RemoteServer, RemoteServerManager
