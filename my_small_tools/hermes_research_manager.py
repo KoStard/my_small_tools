@@ -11,6 +11,7 @@ from prompt_toolkit import prompt
 from my_small_tools.remote_server import RemoteServer, RemoteServerManager
 from my_small_tools.config_manager import ConfigManager
 from my_small_tools.ui.menu_manager import MenuManager
+from my_small_tools.session_manager import SessionManager
 
 # Configuration
 SESSION_PREFIX = "hermes-research-"
@@ -138,184 +139,24 @@ def parse_args():
     
     return args
 
-class TemporaryUnsetEnv:
-    """Context manager for temporarily unsetting an environment variable."""
-    def __init__(self, name):
-        self.name = name
-        self.original_value = None
-        
-    def __enter__(self):
-        if self.name in os.environ:
-            self.original_value = os.environ[self.name]
-            del os.environ[self.name]
-        return self
-        
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.original_value is not None:
-            os.environ[self.name] = self.original_value
+# Session Manager
+session_manager = SessionManager(SESSION_PREFIX)
 
 def create_tmux_session(session_name, config, remote_server=None):
-    """Creates a new detached tmux session.
-    
-    Args:
-        session_name: Name for the tmux session
-        config: Configuration object
-        remote_server: Optional RemoteServer object for remote sessions
-        
-    Returns:
-        True if successful, False otherwise
-    """
-    if remote_server:
-        # Create session on remote server
-        success, message = remote_server.create_tmux_session(session_name)
-        if success:
-            print(f"Created tmux session on {remote_server.name}: {session_name}")
-            
-            # Change directory if configured
-            if remote_server.research_path:
-                cmd = f"cd {remote_server.research_path}"
-                remote_server.send_tmux_command(session_name, cmd)
-                print(f"Changed directory to: {remote_server.research_path}")
-            
-            return True
-        else:
-            print(f"Error creating tmux session on {remote_server.name}: {message}", file=sys.stderr)
-            return False
-    else:
-        # Create local session
-        try:
-            # Use context manager to temporarily unset TMUX
-            with TemporaryUnsetEnv('TMUX'):
-                # Create the session
-                subprocess.run(["tmux", "new-session", "-d", "-s", session_name], check=True, capture_output=True)
-                print(f"Created tmux session: {session_name}")
-            
-            # Change directory if configured
-            research_dir = config.get('general', 'research_directory', fallback='')
-            if research_dir and os.path.isdir(research_dir):
-                subprocess.run(["tmux", "send-keys", "-t", session_name, f"cd {research_dir}", "Enter"], 
-                              check=True, capture_output=True)
-                print(f"Changed directory to: {research_dir}")
-            
-            return True
-        except subprocess.CalledProcessError as e:
-            print(f"Error creating tmux session '{session_name}': {e.stderr.decode() if hasattr(e.stderr, 'decode') else e.stderr}", file=sys.stderr)
-            return False
-        except FileNotFoundError:
-            print("Error: 'tmux' command not found. Is tmux installed and in your PATH?", file=sys.stderr)
-            sys.exit(1)
+    """Creates a new detached tmux session using the session manager."""
+    return session_manager.create_session(session_name, config, remote_server)
 
 def run_command_in_tmux(session_name, command, remote_server=None):
-    """Sends a command to a tmux session.
-    
-    Args:
-        session_name: Name of the tmux session
-        command: Command to run (string or list)
-        remote_server: Optional RemoteServer object for remote sessions
-    """
-    if remote_server:
-        # For remote servers, convert command list to string if needed
-        if isinstance(command, list):
-            command_str = ' '.join(f'"{arg}"' if ' ' in arg else arg for arg in command)
-        else:
-            command_str = command
-            
-        success, message = remote_server.send_tmux_command(session_name, command_str)
-        if success:
-            print(f"Sent command to session '{session_name}' on {remote_server.name}.")
-        else:
-            print(f"Error sending command to tmux session '{session_name}' on {remote_server.name}: {message}", file=sys.stderr)
-    else:
-        # Local session
-        try:
-            # For tmux send-keys, we need to join the command list into a properly quoted string
-            if isinstance(command, list):
-                command_str = ' '.join(f'"{arg}"' if ' ' in arg else arg for arg in command)
-            else:
-                command_str = command
-            subprocess.run(["tmux", "send-keys", "-t", session_name, command_str, "Enter"], check=True, capture_output=True)
-            print(f"Sent command to session '{session_name}'.")
-        except subprocess.CalledProcessError as e:
-            print(f"Error sending command to tmux session '{session_name}': {e.stderr}", file=sys.stderr)
-        except FileNotFoundError:
-            # This should have been caught by create_tmux_session, but check again just in case.
-            print("Error: 'tmux' command not found.", file=sys.stderr)
-            sys.exit(1)
+    """Sends a command to a tmux session using the session manager."""
+    session_manager.run_command(session_name, command, remote_server)
 
 def delete_tmux_session(session_name, remote_server=None):
-    """Kills a specific tmux session.
-    
-    Args:
-        session_name: Name of the tmux session
-        remote_server: Optional RemoteServer object for remote sessions
-        
-    Returns:
-        True if successful or session doesn't exist, False on error
-    """
-    if remote_server:
-        success, message = remote_server.delete_tmux_session(session_name)
-        if success:
-            print(message)
-            return True
-        else:
-            print(f"Error deleting tmux session '{session_name}' on {remote_server.name}: {message}", file=sys.stderr)
-            return False
-    else:
-        # Local session
-        try:
-            subprocess.run(["tmux", "kill-session", "-t", session_name], check=True, capture_output=True)
-            print(f"Deleted tmux session: {session_name}")
-            return True
-        except subprocess.CalledProcessError as e:
-            # Handle case where session might have already been deleted or doesn't exist
-            stderr = e.stderr.lower()
-            if "no server running" in stderr or "can't find session" in stderr or "no session" in stderr:
-                 print(f"Session '{session_name}' not found or already deleted.")
-                 # Consider this non-fatal for the delete loop's purpose
-                 return True # Return True so the interactive loop refreshes list
-            else:
-                print(f"Error deleting tmux session '{session_name}': {e.stderr}", file=sys.stderr)
-                return False
-        except FileNotFoundError:
-            print("Error: 'tmux' command not found.", file=sys.stderr)
-            # If tmux isn't found here, it likely would have failed earlier, but handle defensively.
-            return False
+    """Kills a specific tmux session using the session manager."""
+    return session_manager.delete_session(session_name, remote_server)
 
 def list_tmux_sessions(server_manager=None):
-    """Lists active tmux sessions, filtering for the hermes research prefix.
-    
-    Args:
-        server_manager: Optional RemoteServerManager to list sessions on remote servers
-        
-    Returns:
-        Dictionary mapping location names to lists of session names
-        For local sessions, the key is "local"
-    """
-    results = {"local": []}
-    
-    # Get local sessions
-    try:
-        result = subprocess.run(["tmux", "list-sessions", "-F", "#{session_name}"], check=True, capture_output=True, text=True)
-        sessions = result.stdout.strip().split('\n')
-        if sessions and sessions[0]:  # Check if there are any sessions
-            results["local"] = [s for s in sessions if s.startswith(SESSION_PREFIX)]
-    except subprocess.CalledProcessError as e:
-        # If no server is running, it's not an error, just means no sessions.
-        if "no server running" in e.stderr.lower():
-            results["local"] = []
-        else:
-            print(f"Error listing local tmux sessions: {e.stderr}", file=sys.stderr)
-            results["local"] = []
-    except FileNotFoundError:
-        print("Error: 'tmux' command not found. Is tmux installed and in your PATH?", file=sys.stderr)
-        results["local"] = []
-    
-    # Get remote sessions if server_manager provided
-    if server_manager:
-        remote_results = server_manager.list_all_tmux_sessions(SESSION_PREFIX)
-        results.update(remote_results)
-    
-    return results
+    """Lists active tmux sessions using the session manager."""
+    return session_manager.list_sessions(server_manager)
 
 def save_research_to_markdown(session_suffix, research_text, model, files=None):
     """Save research request to a markdown file with frontmatter."""
@@ -786,56 +627,8 @@ def create_new_session(model, args, config):
             print(f"Attach to it with: tmux attach -t {session_name}")
 
 def display_sessions(server_manager=None):
-    """Displays the list of active hermes research sessions.
-    
-    Args:
-        server_manager: Optional RemoteServerManager to list sessions on remote servers
-    """
-    print("\n--- Active Sessions ---")
-    
-    # Get local sessions first
-    print("Checking local sessions...")
-    all_sessions = list_tmux_sessions(None)
-    local_sessions = all_sessions.get("local", [])
-    
-    if local_sessions:
-        print("\nLocal sessions:")
-        for session in local_sessions:
-            print(f"  - {session}")
-    else:
-        print("\nNo local sessions found.")
-    
-    # Get remote sessions if server_manager provided
-    if server_manager and server_manager.get_all_servers():
-        print("\nChecking remote sessions...")
-        
-        for server in server_manager.get_all_servers():
-            print(f"Checking sessions on {server.name}...")
-            try:
-                sessions = server.list_tmux_sessions(SESSION_PREFIX)
-                if sessions:
-                    print(f"\nSessions on {server.name}:")
-                    for session in sessions:
-                        print(f"  - {session}")
-                else:
-                    print(f"No sessions found on {server.name}.")
-            except Exception as e:
-                print(f"Error checking sessions on {server.name}: {str(e)}")
-    
-    # Provide instructions
-    if local_sessions:
-        if 'TMUX' in os.environ:
-            print("\nFor local sessions:")
-            print("  Switch to a session with: tmux switch-client -t <session_name>")
-            print("  Or press Ctrl+B S to interactively select and switch to the session")
-            print("  Or detach from current session with Ctrl+B d, then attach with: tmux attach -t <session_name>")
-        else:
-            print("\nAttach to a local session using: tmux attach -t <session_name>")
-    
-    if server_manager and server_manager.get_all_servers():
-        print("\nFor remote sessions:")
-        print("  1. SSH to the remote server")
-        print("  2. Run: tmux attach -t <session_name>")
+    """Displays the list of active hermes research sessions using the session manager."""
+    session_manager.display_sessions(server_manager)
 
 
 def delete_sessions_interactive(server_manager=None):
