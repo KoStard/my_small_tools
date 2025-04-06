@@ -575,7 +575,7 @@ def run_research_from_file(filepath, override_model=None):
     # Process files for remote server if needed
     remote_files = []
     if remote_server and files:
-        success, remote_paths, message = transfer_files_to_remote(files, remote_server)
+        success, remote_paths, message = remote_server.transfer_files(files)
         if success and remote_paths:
             remote_files = remote_paths
         else:
@@ -789,7 +789,7 @@ def create_new_session(model, args, config):
     # Process files for remote server if needed
     remote_files = []
     if remote_server and args.files:
-        success, remote_paths, message = transfer_files_to_remote(args.files, remote_server)
+        success, remote_paths, message = remote_server.transfer_files(args.files)
         if success and remote_paths:
             remote_files = remote_paths
         else:
@@ -1082,7 +1082,7 @@ def create_bulk_sessions(model, args, config):
         # Process files for remote server if needed
         remote_files = []
         if remote_server and args.files:
-            success, remote_paths, message = transfer_files_to_remote(args.files, remote_server)
+            success, remote_paths, message = remote_server.transfer_files(args.files)
             if success and remote_paths:
                 remote_files = remote_paths
             else:
@@ -1373,51 +1373,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-def transfer_files_to_remote(files, remote_server):
-    """Transfer files to a remote server.
-    
-    Args:
-        files: List of local file paths
-        remote_server: RemoteServer object
-        
-    Returns:
-        Tuple of (success, remote_files, message)
-        remote_files is a list of remote file paths
-    """
-    if not files:
-        return True, [], "No files to transfer"
-    
-    # Generate temp directory if needed
-    if not remote_server.current_uuid:
-        remote_dir = remote_server.generate_temp_dir()
-    else:
-        remote_dir = f"/tmp/hermes_deep_research_{remote_server.current_uuid}"
-    
-    print(f"Transferring {len(files)} files to {remote_server.name}...")
-    
-    # Ensure remote directory exists
-    success, message = remote_server.ensure_remote_dir(remote_dir)
-    if not success:
-        return False, [], f"Failed to create remote directory: {message}"
-    
-    # Transfer files
-    remote_files = []
-    for file in files:
-        if not os.path.exists(file):
-            print(f"Warning: File not found: {file}")
-            continue
-            
-        success, message = remote_server.transfer_file(file, remote_dir)
-        if success:
-            # Get just the filename without path
-            filename = os.path.basename(file)
-            remote_path = f"{remote_dir}/{filename}"
-            remote_files.append(remote_path)
-            print(f"  {file} -> {remote_path}")
-        else:
-            print(f"  Error transferring {file}: {message}")
-    
-    if remote_files:
-        return True, remote_files, f"Transferred {len(remote_files)} files"
-    else:
-        return False, [], "Failed to transfer any files"

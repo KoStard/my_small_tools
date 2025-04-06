@@ -160,6 +160,54 @@ class RemoteServer:
         except Exception as e:
             logger.warning(f"Error listing sessions on {self.name}: {str(e)}")
             return []
+
+    def transfer_files(self, files: List[str]) -> Tuple[bool, List[str], str]:
+        """Transfer files to the remote server.
+        
+        Args:
+            files: List of local file paths
+            
+        Returns:
+            Tuple of (success, remote_files, message)
+            remote_files is a list of remote file paths
+        """
+        if not files:
+            return True, [], "No files to transfer"
+        
+        # Generate temp directory if needed
+        if not self.current_uuid:
+            remote_dir = self.generate_temp_dir()
+        else:
+            remote_dir = f"/tmp/hermes_deep_research_{self.current_uuid}"
+        
+        logger.info(f"Transferring {len(files)} files to {self.name}...")
+        
+        # Ensure remote directory exists
+        success, message = self.ensure_remote_dir(remote_dir)
+        if not success:
+            return False, [], f"Failed to create remote directory: {message}"
+        
+        # Transfer files
+        remote_files = []
+        for file in files:
+            if not os.path.exists(file):
+                logger.warning(f"Warning: File not found: {file}")
+                continue
+                
+            success, message = self.transfer_file(file, remote_dir)
+            if success:
+                # Get just the filename without path
+                filename = os.path.basename(file)
+                remote_path = f"{remote_dir}/{filename}"
+                remote_files.append(remote_path)
+                logger.info(f"  {file} -> {remote_path}")
+            else:
+                logger.warning(f"  Error transferring {file}: {message}")
+        
+        if remote_files:
+            return True, remote_files, f"Transferred {len(remote_files)} files"
+        else:
+            return False, [], "Failed to transfer any files"
     
     def create_tmux_session(self, session_name: str) -> Tuple[bool, str]:
         """Create a new tmux session on the remote server.
