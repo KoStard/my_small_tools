@@ -589,12 +589,18 @@ def run_research_from_file(filepath, override_model=None):
     
     # Build command
     research_text_processed = research_text.replace('\"', '\\\"')
+    # Ask for budget
+    budget = prompt("Enter budget (number of message cycles, press Enter for no limit): ").strip()
+            
     hermes_command = [
         "hermes", "chat",
         "--model", model,
         "--deep-research", session_suffix,
         "--text", research_text_processed
     ]
+            
+    if budget and budget.isdigit():
+        hermes_command.extend(["--set_deep_research_budget", budget])
     
     # Add files
     if remote_server:
@@ -1137,12 +1143,19 @@ def create_bulk_sessions(model, args, config):
             # Save research to markdown file (always save locally)
             save_research_to_markdown(problem['name'], full_text, model, args.files)
             
+            # Ask for budget once before processing all problems
+            if 'budget' not in locals():
+                budget = prompt("Enter budget for all sessions (number of message cycles, press Enter for no limit): ").strip()
+            
             hermes_command = [
                 "hermes", "chat",
                 "--model", model,
                 "--deep-research", problem['name'],
                 "--text", full_text.replace('\"', '\\\"')
             ]
+            
+            if budget and budget.isdigit():
+                hermes_command.extend(["--set_deep_research_budget", budget])
             
             # Add files as --textual_file arguments
             if remote_server:
