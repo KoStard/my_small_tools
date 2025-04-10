@@ -10,6 +10,12 @@ A simple tool to automatically sync multiple git-based (knowledge base) reposito
 - Configurable repository paths
 - Merge conflict detection
 
+### Installation
+
+```
+uv tool install --upgrade git+https://github.com/KoStard/my_small_tools
+```
+
 ### Configuration
 
 The tool will automatically create a config file at `~/.config/my_small_tools/sync_knowledge_base.ini` on first run.
