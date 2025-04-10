@@ -29,11 +29,12 @@ class ConfigManager:
             if not config.has_section(section):
                 config.add_section(section)
             for option, value in options.items():
-                if isinstance(value, dict):
-                    # For nested dictionaries (like remote_servers), store as JSON
+                if isinstance(value, (dict, list)):
+                    # For nested dictionaries and lists, store as JSON
                     config.set(section, option, json.dumps(value))
                 else:
-                    config.set(section, option, value)
+                    # Convert to string for ConfigParser
+                    config.set(section, option, str(value))
         
         # Create config directory if it doesn't exist
         if not os.path.exists(self.config_dir):

@@ -21,7 +21,7 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "config.ini")
 DEFAULT_CONFIG = {
     "general": {
         "research_directory": "",
-        "default_model": "",
+        "models": [],  # List of models
     },
     "remote_servers": {}
 }
@@ -98,9 +98,15 @@ def parse_args():
     set_dir_parser = config_subparsers.add_parser('set-directory', help='Set default research directory')
     set_dir_parser.add_argument('directory', help='Path to research directory')
     
-    # Set default model
-    set_model_parser = config_subparsers.add_parser('set-model', help='Set default Hermes model')
-    set_model_parser.add_argument('model', help='Default Hermes model to use')
+    # Model management
+    add_model_parser = config_subparsers.add_parser('add-model', help='Add a Hermes model to the list')
+    add_model_parser.add_argument('model', help='Model to add to the list')
+    
+    remove_model_parser = config_subparsers.add_parser('remove-model', help='Remove a Hermes model from the list')
+    remove_model_parser.add_argument('model', help='Model to remove from the list')
+    
+    # List models
+    config_subparsers.add_parser('list-models', help='List configured Hermes models')
     
     # Show config
     config_subparsers.add_parser('show', help='Show current configuration')
@@ -165,12 +171,44 @@ def handle_config_commands(args):
         config.save()
         print(f"Default research directory set to: {directory}")
     
-    elif args.config_command == 'set-model':
-        model = args.model
-        config.set('general', 'default_model', model)
-        config.save()
-        print(f"Default Hermes model set to: {model}")
+    elif args.config_command == 'add-model':
+        models = config.get_json('general', 'models', [])
+        if args.model not in models:
+            models.append(args.model)
+            config.set_json('general', 'models', models)
+            config.save()
+            print(f"Added model to list: {args.model}")
+        else:
+            print(f"Model already in list: {args.model}")
+        print("Current models:")
+        for i, model in enumerate(models, 1):
+            print(f"  {i}: {model}")
+            
+    elif args.config_command == 'remove-model':
+        models = config.get_json('general', 'models', [])
+        if args.model in models:
+            models.remove(args.model)
+            config.set_json('general', 'models', models)
+            config.save()
+            print(f"Removed model from list: {args.model}")
+        else:
+            print(f"Model not found in list: {args.model}")
+        if models:
+            print("Current models:")
+            for i, model in enumerate(models, 1):
+                print(f"  {i}: {model}")
+        else:
+            print("No models configured.")
     
+    elif args.config_command == 'list-models':
+        models = config.get_json('general', 'models', [])
+        if models:
+            print("\nConfigured models:")
+            for i, model in enumerate(models, 1):
+                print(f"{i}: {model}")
+        else:
+            print("No models configured.")
+            
     elif args.config_command == 'show':
         print("\n--- Current Configuration ---")
         for section in config.sections():
@@ -277,18 +315,38 @@ def run_interactive_menu(args):
     model = args.model
     if not model:
         # Try to get from config
-        model = config.get('general', 'default_model', fallback='')
-        
-        # If still no model, prompt the user
-        if not model:
+        models = config.get_json('general', 'models', [])
+            
+        if not models:
             try:
                 model = MenuManager.text_prompt("Enter Hermes model to use: ")
                 if not model:
                     print("No model specified. Exiting.")
-                    return
+                    return False
             except KeyboardInterrupt:
                 print("\nExiting.")
-                return
+                return False
+        elif len(models) == 1:
+            model = models[0]
+        else:
+            print("\nAvailable models:")
+            for i, m in enumerate(models, 1):
+                print(f"{i}: {m}")
+            try:
+                choice = MenuManager.text_prompt("Select model number: ")
+                try:
+                    index = int(choice) - 1
+                    if 0 <= index < len(models):
+                        model = models[index]
+                    else:
+                        print("Invalid model selection.")
+                        return False
+                except ValueError:
+                    print("Invalid input. Please enter a number.")
+                    return False
+            except KeyboardInterrupt:
+                print("\nExiting.")
+                return False
     
     # Define menu options and their handlers
     menu_options = {
