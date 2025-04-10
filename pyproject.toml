@@ -15,3 +15,4 @@ dependencies = [
 [project.scripts]
 sync-knowledge-base = "my_small_tools.sync_knowledge_base:main"
 hermes-research = "my_small_tools.hermes_research_manager:main"
+ls-time = "my_small_tools.ls_time:main"
