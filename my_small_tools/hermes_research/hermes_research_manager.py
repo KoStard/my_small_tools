@@ -8,14 +8,14 @@ import sys
 from prompt_toolkit import prompt
 
 # Import our modules
-from my_small_tools.remote_server import RemoteServer, RemoteServerManager
-from my_small_tools.config_manager import ConfigManager
-from my_small_tools.ui.menu_manager import MenuManager
-from my_small_tools.session_manager import SessionManager
-from my_small_tools.research_manager import ResearchManager
+from my_small_tools.hermes_research.remote_server import RemoteServer, RemoteServerManager
+from my_small_tools.hermes_research.config_manager import ConfigManager
+from my_small_tools.hermes_research.ui.menu_manager import MenuManager
+from my_small_tools.hermes_research.session_manager import SessionManager
+from my_small_tools.hermes_research.research_manager import ResearchManager
 
 # Configuration
-SESSION_PREFIX = "hermes-research-"
+SESSION_PREFIX = "hermes_research-"
 CONFIG_DIR = os.path.expanduser("~/.config/hermes_research_manager")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.ini")
 DEFAULT_CONFIG = {

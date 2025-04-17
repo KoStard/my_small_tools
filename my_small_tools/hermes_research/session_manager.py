@@ -4,7 +4,7 @@ import os
 import sys
 from typing import Dict, List, Optional, Tuple, Any
 
-from my_small_tools.remote_server import RemoteServer, RemoteServerManager
+from my_small_tools.hermes_research.remote_server import RemoteServer, RemoteServerManager
 
 class SessionManager:
     """Manages tmux sessions for both local and remote environments."""
