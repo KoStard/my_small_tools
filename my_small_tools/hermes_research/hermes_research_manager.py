@@ -73,6 +73,10 @@ def parse_args():
         help='Hermes model to use (e.g. "gemini/gemini-2.0-flash-thinking-exp-01-21"). If not provided, uses the configured default model.'
     )
     run_parser.add_argument(
+        '-c', '--chat-args',
+        help='Additional arguments to pass directly to hermes chat command'
+    )
+    run_parser.add_argument(
         'files',
         nargs='*',
         help='Files to pass to hermes chat as --textual_file arguments'

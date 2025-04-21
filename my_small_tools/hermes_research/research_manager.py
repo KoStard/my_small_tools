@@ -210,7 +210,8 @@ class ResearchManager:
 
         # Process files and create command
         success, command = self._prepare_hermes_command(
-            session_suffix, research_text, model, args.files, remote_server, budget)
+            session_suffix, research_text, model, args.files, remote_server, budget,
+            args.chat_args if hasattr(args, 'chat_args') else None)
         
         if not success:
             return False
@@ -307,7 +308,8 @@ class ResearchManager:
             # Create sessions
             return self._create_bulk_sessions_internal(
                 problems, shared_guidance, model, args.files, remote_files, 
-                budget, remote_server, all_sessions)
+                budget, remote_server, all_sessions,
+                args.chat_args if hasattr(args, 'chat_args') else None)
 
         except KeyboardInterrupt:
             print("\nBulk creation cancelled.")
@@ -484,7 +486,8 @@ class ResearchManager:
     def _prepare_hermes_command(self, session_suffix: str, research_text: str, 
                                model: str, files: List[str], 
                                remote_server: Optional[RemoteServer], 
-                               budget: str = None) -> Tuple[bool, List[str]]:
+                               budget: str = None,
+                               chat_args: Optional[str] = None) -> Tuple[bool, List[str]]:
         """Prepare the hermes command for a session.
         
         Returns:
@@ -516,6 +519,10 @@ class ResearchManager:
                 
         if budget and budget.isdigit():
             hermes_command.extend(["--set_deep_research_budget", budget])
+
+        # Add any additional chat arguments if specified
+        if chat_args:
+            hermes_command.extend(chat_args.split())
         
         # Add files
         if remote_server:
@@ -573,7 +580,8 @@ class ResearchManager:
                                       shared_guidance: str, model: str, 
                                       files: List[str], remote_files: List[str],
                                       budget: str, remote_server: Optional[RemoteServer], 
-                                      all_sessions: Dict[str, List[str]]) -> bool:
+                                      all_sessions: Dict[str, List[str]],
+                                      chat_args: Optional[str] = None) -> bool:
         """Create multiple sessions from the parsed problem list.
         
         Returns:
@@ -618,6 +626,10 @@ class ResearchManager:
             
             if budget and budget.isdigit():
                 hermes_command.extend(["--set_deep_research_budget", budget])
+                
+            # Add any additional chat arguments if specified
+            if chat_args:
+                hermes_command.extend(chat_args.split())
             
             # Add files
             if remote_server:
