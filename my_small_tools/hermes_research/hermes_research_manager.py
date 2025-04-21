@@ -260,9 +260,9 @@ def handle_config_commands(args):
             
     elif args.config_command == 'show':
         print("\n--- Current Configuration ---")
-        for section in config.sections():
+        for section in config.config.sections():
             print(f"[{section}]")
-            for key, value in config.items(section):
+            for key, value in config.config.items(section):
                 if key == 'remote_servers':
                     # Parse and pretty-print the JSON
                     try:
