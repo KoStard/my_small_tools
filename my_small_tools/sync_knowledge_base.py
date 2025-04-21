@@ -2,11 +2,41 @@
 
 import subprocess
 import configparser
+import sys
 from pathlib import Path
+from appdirs import user_config_dir
+
+# --- Platform-Independent Configuration ---
+
+def _get_config_root_dir() -> Path:
+    """
+    Determines the root directory for sync_knowledge_base configuration files based on OS.
+
+    - Linux & macOS: Uses ~/.config/my_small_tools/
+    - Windows: Uses the standard AppData directory (%APPDATA%\\my_small_tools\\)
+    """
+    app_name = "my_small_tools"
+    if sys.platform in ["linux", "darwin"]: # darwin is macOS
+        # Use the desired path for Linux and macOS
+        return Path.home() / ".config" / app_name
+    elif sys.platform == "win32":
+        # Use standard Windows path via appdirs (without appauthor)
+        # Gives C:\Users\<User>\AppData\Roaming\my_small_tools\
+        return Path(user_config_dir(appname=app_name, appauthor=False))
+    else:
+        # Fallback for other potential OS - default to Unix-like style
+        print(f"Warning: Unsupported platform '{sys.platform}'. Defaulting config path to ~/.config/{app_name}/")
+        return Path.home() / ".config" / app_name
+
+def get_config_path() -> Path:
+    """Returns the full path to the sync_knowledge_base.ini file."""
+    return _get_config_root_dir() / "sync_knowledge_base.ini"
+
+# --- Sync Logic ---
 
 def get_repos_from_config():
     """Read repository paths from config file, creating it if missing"""
-    config_path = Path.home() / '.config' / 'my_small_tools' / 'sync_knowledge_base.ini'
+    config_path = get_config_path()
     
     # Create config file with default paths if it doesn't exist
     if not config_path.exists():
@@ -72,8 +102,9 @@ def sync_repositories(repos):
 def main():
     repos = get_repos_from_config()
     if not repos:
+        config_path = get_config_path()
         print("No repositories configured. Please add repository paths to the config file:")
-        print("~/.config/my_small_tools/sync_knowledge_base.ini")
+        print(f"{config_path}")
         print("Add paths under the [DEFAULT] section like this:")
         print("[DEFAULT]")
         print("repos = ")
