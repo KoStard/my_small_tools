@@ -51,6 +51,7 @@ DEFAULT_CONFIG = {
     "general": {
         "research_directory": "",
         "models": [],  # List of models
+        "default_budget": "30", # Default message cycle budget
     },
     "remote_servers": {}
 }
@@ -133,6 +134,10 @@ def parse_args():
     # Set research directory
     set_dir_parser = config_subparsers.add_parser('set-directory', help='Set default research directory')
     set_dir_parser.add_argument('directory', help='Path to research directory')
+
+    # Set default budget
+    set_budget_parser = config_subparsers.add_parser('set-budget', help='Set default message cycle budget')
+    set_budget_parser.add_argument('budget', type=int, help='Default budget (integer)')
     
     # Model management
     add_model_parser = config_subparsers.add_parser('add-model', help='Add a Hermes model to the list')
@@ -206,6 +211,14 @@ def handle_config_commands(args):
         config.set('general', 'research_directory', directory)
         config.save()
         print(f"Default research directory set to: {directory}")
+
+    elif args.config_command == 'set-budget':
+        if args.budget > 0:
+            config.set('general', 'default_budget', str(args.budget))
+            config.save()
+            print(f"Default budget set to: {args.budget}")
+        else:
+            print("Error: Budget must be a positive integer.")
     
     elif args.config_command == 'add-model':
         models = config.get_json('general', 'models', [])

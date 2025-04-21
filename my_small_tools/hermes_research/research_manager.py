@@ -183,8 +183,11 @@ class ResearchManager:
                 return False
                 
             # Ask for budget right after research text
-            budget = MenuManager.text_prompt(
-                "Enter budget (number of message cycles, press Enter for no limit): ").strip()
+            default_budget = self.config.get('general', 'default_budget', fallback='30')
+            budget_prompt = f"Enter budget (message cycles, Enter for default: {default_budget}): "
+            budget_input = MenuManager.text_prompt(budget_prompt).strip()
+            budget = budget_input if budget_input else default_budget
+            
         except KeyboardInterrupt:
             print("\nResearch text input cancelled.")
             return False
@@ -261,8 +264,10 @@ class ResearchManager:
                 return False
                 
             # Ask for budget before processing problems
-            budget = MenuManager.text_prompt(
-                "Enter budget for all sessions (number of message cycles, press Enter for no limit): ").strip()
+            default_budget = self.config.get('general', 'default_budget', fallback='30')
+            budget_prompt = f"Enter budget for all sessions (message cycles, Enter for default: {default_budget}): "
+            budget_input = MenuManager.text_prompt(budget_prompt).strip()
+            budget = budget_input if budget_input else default_budget
 
             # Process the bulk input
             problems = self._parse_bulk_input(bulk_input)
@@ -366,8 +371,10 @@ class ResearchManager:
             return False  # User cancelled or chose to use existing session
             
         # Ask for budget
-        budget = MenuManager.text_prompt(
-            "Enter budget (number of message cycles, press Enter for no limit): ").strip()
+        default_budget = self.config.get('general', 'default_budget', fallback='30')
+        budget_prompt = f"Enter budget (message cycles, Enter for default: {default_budget}): "
+        budget_input = MenuManager.text_prompt(budget_prompt).strip()
+        budget = budget_input if budget_input else default_budget
             
         # Process files and create command
         success, command = self._prepare_hermes_command(
@@ -517,8 +524,14 @@ class ResearchManager:
             "--text", research_text_processed
         ]
                 
+        # Always add budget if it's a valid digit
         if budget and budget.isdigit():
             hermes_command.extend(["--set_deep_research_budget", budget])
+        else:
+            # Fallback to default if budget is somehow invalid or empty
+            default_budget = self.config.get('general', 'default_budget', fallback='30')
+            if default_budget and default_budget.isdigit():
+                 hermes_command.extend(["--set_deep_research_budget", default_budget])
 
         # Add any additional chat arguments if specified
         if chat_args:
@@ -624,8 +637,14 @@ class ResearchManager:
                 "--text", full_text.replace('\"', '\\\"')
             ]
             
+            # Always add budget if it's a valid digit
             if budget and budget.isdigit():
                 hermes_command.extend(["--set_deep_research_budget", budget])
+            else:
+                # Fallback to default if budget is somehow invalid or empty
+                default_budget = self.config.get('general', 'default_budget', fallback='30')
+                if default_budget and default_budget.isdigit():
+                    hermes_command.extend(["--set_deep_research_budget", default_budget])
                 
             # Add any additional chat arguments if specified
             if chat_args:
