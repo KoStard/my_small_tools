@@ -9,6 +9,7 @@ description = "Collection of my tools for every day"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "appdirs>=1.4.4",
     "prompt_toolkit>=3.0",
 ]
 

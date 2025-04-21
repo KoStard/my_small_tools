@@ -1,10 +1,14 @@
 #!/usr/bin/env python
 import argparse
 import datetime
+import argparse
+import datetime
 import json
 import os
 import subprocess
 import sys
+from pathlib import Path
+from appdirs import user_config_dir
 from prompt_toolkit import prompt
 
 # Import our modules
@@ -14,10 +18,35 @@ from my_small_tools.hermes_research.ui.menu_manager import MenuManager
 from my_small_tools.hermes_research.session_manager import SessionManager
 from my_small_tools.hermes_research.research_manager import ResearchManager
 
-# Configuration
+
+# --- Platform-Independent Configuration ---
+
+def _get_config_root_dir() -> Path:
+    """
+    Determines the root directory for Hermes Research Manager configuration files based on OS.
+
+    - Linux & macOS: Uses ~/.config/hermes_research_manager/
+    - Windows: Uses the standard AppData directory (%APPDATA%\\hermes_research_manager\\)
+    """
+    app_name = "hermes_research_manager"
+    if sys.platform in ["linux", "darwin"]: # darwin is macOS
+        # Use the desired path for Linux and macOS
+        return Path.home() / ".config" / app_name
+    elif sys.platform == "win32":
+        # Use standard Windows path via appdirs (without appauthor)
+        # Gives C:\Users\<User>\AppData\Roaming\hermes_research_manager\
+        return Path(user_config_dir(appname=app_name, appauthor=False))
+    else:
+        # Fallback for other potential OS - default to Unix-like style
+        print(f"Warning: Unsupported platform '{sys.platform}'. Defaulting config path to ~/.config/{app_name}/")
+        return Path.home() / ".config" / app_name
+
+def get_config_path() -> Path:
+    """Returns the full path to the config.ini file."""
+    return _get_config_root_dir() / "config.ini"
+
+# Configuration Constants
 SESSION_PREFIX = "hermes_research-"
-CONFIG_DIR = os.path.expanduser("~/.config/hermes_research_manager")
-CONFIG_FILE = os.path.join(CONFIG_DIR, "config.ini")
 DEFAULT_CONFIG = {
     "general": {
         "research_directory": "",
@@ -26,8 +55,11 @@ DEFAULT_CONFIG = {
     "remote_servers": {}
 }
 
-# Initialize config manager
-config_manager = ConfigManager(CONFIG_DIR, CONFIG_FILE, DEFAULT_CONFIG)
+# Initialize config manager using platform-independent paths
+config_path = get_config_path()
+config_dir = config_path.parent
+config_manager = ConfigManager(str(config_dir), str(config_path), DEFAULT_CONFIG)
+
 
 def get_remote_servers():
     """Load remote servers from config."""
@@ -231,12 +263,19 @@ def handle_config_commands(args):
                         print(f"{key} = {value}")
                 else:
                     print(f"{key} = {value}")
-        print(f"\nConfiguration file: {CONFIG_FILE}")
-    
+        print(f"\nConfiguration file: {get_config_path()}")
+
     elif args.config_command == 'edit':
-        editor = os.environ.get('EDITOR', 'nano')
+        editor = os.environ.get('EDITOR', 'notepad' if sys.platform == "win32" else 'nano') # Default to notepad on Windows
+        config_file_path = str(get_config_path())
         try:
-            subprocess.run([editor, CONFIG_FILE])
+            # Ensure the directory exists before trying to edit the file
+            os.makedirs(os.path.dirname(config_file_path), exist_ok=True)
+            # Create the file if it doesn't exist, so the editor doesn't fail
+            if not os.path.exists(config_file_path):
+                with open(config_file_path, 'w') as f:
+                    pass # Just create an empty file
+            subprocess.run([editor, config_file_path])
         except FileNotFoundError:
             print(f"Error: Editor '{editor}' not found. Set the EDITOR environment variable.")
         except Exception as e:
@@ -377,12 +416,13 @@ def main():
         handle_config_commands(args)
     elif args.command == 'from-file':
         # Use the utility function to resolve the filepath
-        from my_small_tools.utils import resolve_filepath
+        from my_small_tools.hermes_research.utils import resolve_filepath
+
         filepath = resolve_filepath(
-            args.markdown_file, 
+            args.markdown_file,
             config_manager.get('general', 'research_directory', fallback='')
         )
-        
+
         if not os.path.exists(filepath):
             print(f"Error: File not found: {filepath}")
             sys.exit(1)
