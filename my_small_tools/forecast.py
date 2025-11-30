@@ -30,9 +30,10 @@ import argparse
 import sys
 import json
 from pathlib import Path
-from typing import Optional, Tuple, Any
+from typing import Optional, Tuple, Any, Callable
 
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 from dateutil import parser as dateparser
@@ -49,12 +50,16 @@ def parse_time_string(time_str: str) -> int:
     multipliers = {
         'day': 1,
         'days': 1,
+        'd': 1,
         'week': 7,
         'weeks': 7,
+        'w': 7,
         'month': 30,
         'months': 30,
+        'm': 30,
         'year': 365,
         'years': 365,
+        'y': 365,
     }
 
     for unit, multiplier in multipliers.items():
@@ -101,6 +106,36 @@ def detect_seasonal_period(freq: str) -> Optional[int]:
     base_freq = freq[0] if freq else ''
 
     return freq_map.get(base_freq)
+
+
+def limit_historical_data(
+    dates: pd.Series,
+    values: pd.Series,
+    limit_days: Optional[int]
+) -> Tuple[pd.Series, pd.Series]:
+    """
+    Limit historical data to the last X days
+    Returns: (limited_dates, limited_values)
+    """
+    if limit_days is None:
+        return dates, values
+
+    if len(dates) == 0:
+        return dates, values
+
+    max_date = dates.max()
+    cutoff_date = max_date - pd.Timedelta(days=limit_days)
+
+    mask = dates >= cutoff_date
+    limited_dates = dates[mask].reset_index(drop=True)
+    limited_values = values[mask].reset_index(drop=True)
+
+    removed_count = len(dates) - len(limited_dates)
+    if removed_count > 0:
+        print(f"📊 Limited historical data to last {limit_days} days")
+        print(f"   Removed {removed_count} older rows, keeping {len(limited_dates)} rows")
+
+    return limited_dates, limited_values
 
 
 def load_and_clean_data(
@@ -192,16 +227,137 @@ def load_and_clean_data(
     return dates, values, invalid_reports
 
 
+def forecast_holt_winters(
+    ts_regular: pd.Series,
+    forecast_days: int,
+    freq_str: str,
+    seasonal_period: Optional[int] = None
+) -> pd.Series:
+    """
+    Holt-Winters exponential smoothing forecast
+    """
+    # Check if we have enough data for the seasonal period
+    if seasonal_period is not None and len(ts_regular) < 2 * seasonal_period:
+        print(f"⚠️  Too few values ({len(ts_regular)}) for seasonal period {seasonal_period}. Disabling seasonality.")
+        seasonal_period = None
+
+    # Prepare model parameters
+    model_kwargs = {
+        'trend': 'add',
+        'initialization_method': 'estimated'
+    }
+
+    if seasonal_period:
+        model_kwargs['seasonal'] = 'add'
+        model_kwargs['seasonal_periods'] = seasonal_period
+
+    # Fit model
+    print("🤖 Fitting Holt-Winters model...")
+    try:
+        model = ExponentialSmoothing(ts_regular, **model_kwargs)
+        fitted = model.fit()
+    except Exception as e:
+        print(f"⚠️  Failed to fit model with seasonality: {e}")
+        if seasonal_period is not None:
+            print("   Retrying without seasonality")
+            model_kwargs.pop('seasonal', None)
+            model_kwargs.pop('seasonal_periods', None)
+            model = ExponentialSmoothing(ts_regular, **model_kwargs)
+            fitted = model.fit()
+        else:
+            raise
+
+    # Generate forecast
+    periods_to_forecast = forecast_days * 24 if freq_str == 'h' else forecast_days
+    forecast = fitted.forecast(periods_to_forecast)
+
+    return forecast
+
+
+def forecast_linear(
+    ts_regular: pd.Series,
+    forecast_days: int,
+    freq_str: str,
+    seasonal_period: Optional[int] = None
+) -> pd.Series:
+    """
+    Linear regression forecast based on recent trend
+    """
+    print("🤖 Fitting linear trend model...")
+
+    # Use last 50% of data or at least 10 points for trend
+    trend_window = max(10, len(ts_regular) // 2)
+    recent_data = ts_regular.iloc[-trend_window:]
+
+    # Fit polynomial (degree 1 = linear)
+    x = np.arange(len(recent_data))
+    y = recent_data.values
+    coeffs = np.polyfit(x, y, 1)
+    poly = np.poly1d(coeffs)
+
+    # Generate forecast
+    periods_to_forecast = forecast_days * 24 if freq_str == 'h' else forecast_days
+    future_x = np.arange(len(recent_data), len(recent_data) + periods_to_forecast)
+    forecast_values = poly(future_x)
+
+    # Create forecast series with proper index
+    timedelta = pd.Timedelta(hours=1) if freq_str == 'h' else pd.Timedelta(days=1)
+    forecast_index = pd.date_range(
+        start=ts_regular.index[-1] + timedelta,
+        periods=periods_to_forecast,
+        freq=freq_str
+    )
+    forecast = pd.Series(forecast_values, index=forecast_index)
+
+    return forecast
+
+
+def forecast_moving_average(
+    ts_regular: pd.Series,
+    forecast_days: int,
+    freq_str: str,
+    seasonal_period: Optional[int] = None
+) -> pd.Series:
+    """
+    Moving average forecast - extrapolates the recent average
+    """
+    print("🤖 Fitting moving average model...")
+
+    # Use last 20% of data or at least 5 points for average
+    avg_window = max(5, len(ts_regular) // 5)
+    recent_avg = ts_regular.iloc[-avg_window:].mean()
+
+    # Generate forecast with constant value (recent average)
+    periods_to_forecast = forecast_days * 24 if freq_str == 'h' else forecast_days
+    forecast_values = np.full(periods_to_forecast, recent_avg)
+
+    # Create forecast series with proper index
+    timedelta = pd.Timedelta(hours=1) if freq_str == 'h' else pd.Timedelta(days=1)
+    forecast_index = pd.date_range(
+        start=ts_regular.index[-1] + timedelta,
+        periods=periods_to_forecast,
+        freq=freq_str
+    )
+    forecast = pd.Series(forecast_values, index=forecast_index)
+
+    return forecast
+
+
 def create_forecast(
     dates: pd.Series,
     values: pd.Series,
     forecast_days: int,
-    seasonal_period: Optional[int] = None
+    seasonal_period: Optional[int] = None,
+    algorithm: str = 'holt-winters',
+    limit_history_days: Optional[int] = None
 ) -> Tuple[pd.Series, pd.Series, str]:
     """
-    Create Holt-Winters forecast
+    Create forecast using specified algorithm
     Returns: (historical_series, forecast_series, frequency_info)
     """
+    # Limit historical data if requested
+    if limit_history_days:
+        dates, values = limit_historical_data(dates, values, limit_history_days)
     # Create time series
     ts = pd.Series(values.values, index=dates)
 
@@ -236,11 +392,6 @@ def create_forecast(
     else:
         print(f"📅 Using provided seasonal period: {seasonal_period}")
 
-    # Check if we have enough data for the seasonal period
-    if seasonal_period is not None and non_nan_count < 2 * seasonal_period:
-        print(f"⚠️  Too few non-NaN values ({non_nan_count}) for seasonal period {seasonal_period}. Disabling seasonality.")
-        seasonal_period = None
-
     # Fill missing values
     if ts_regular.isna().any():
         print("   Filling missing values with forward fill and then backward fill")
@@ -251,35 +402,17 @@ def create_forecast(
             print("   Filling remaining NaNs with mean")
             ts_regular = ts_regular.fillna(ts_regular.mean())
 
-    # Prepare model parameters
-    model_kwargs = {
-        'trend': 'add',
-        'initialization_method': 'estimated'
-    }
-
-    if seasonal_period:
-        model_kwargs['seasonal'] = 'add'
-        model_kwargs['seasonal_periods'] = seasonal_period
-
-    # Fit model
-    print("🤖 Fitting Holt-Winters model...")
-    try:
-        model = ExponentialSmoothing(ts_regular, **model_kwargs)
-        fitted = model.fit()
-    except Exception as e:
-        print(f"⚠️  Failed to fit model with seasonality: {e}")
-        if seasonal_period is not None:
-            print("   Retrying without seasonality")
-            model_kwargs.pop('seasonal', None)
-            model_kwargs.pop('seasonal_periods', None)
-            model = ExponentialSmoothing(ts_regular, **model_kwargs)
-            fitted = model.fit()
-        else:
-            raise
-
-    # Generate forecast
-    periods_to_forecast = forecast_days * 24 if freq_str == 'h' else forecast_days
-    forecast = fitted.forecast(periods_to_forecast)
+    # Select forecasting algorithm
+    print(f"📊 Using algorithm: {algorithm}")
+    
+    if algorithm == 'holt-winters':
+        forecast = forecast_holt_winters(ts_regular, forecast_days, freq_str, seasonal_period)
+    elif algorithm == 'linear':
+        forecast = forecast_linear(ts_regular, forecast_days, freq_str, seasonal_period)
+    elif algorithm == 'moving-average':
+        forecast = forecast_moving_average(ts_regular, forecast_days, freq_str, seasonal_period)
+    else:
+        raise ValueError(f"Unknown algorithm: {algorithm}. Use 'holt-winters', 'linear', or 'moving-average'")
 
     return ts_regular, forecast, freq_str
 
@@ -409,7 +542,9 @@ def generate_script(
     dates_col: str,
     forecast_days: int,
     seasonal_period: Optional[int],
-    output_path: str
+    output_path: str,
+    algorithm: str = 'holt-winters',
+    limit_history_days: Optional[int] = None
 ) -> None:
     """
     Generate a self-contained script with hardcoded parameters
@@ -419,6 +554,7 @@ def generate_script(
 # requires-python = ">=3.12"
 # dependencies = [
 #   "pandas>=2.0",
+#   "numpy>=1.24",
 #   "statsmodels>=0.14",
 #   "plotly>=5.0",
 #   "python-dateutil>=2.8",
@@ -433,17 +569,20 @@ Values column: {values_col}
 Dates column: {dates_col}
 Forecast days: {forecast_days}
 Seasonal period: {seasonal_period}
+Algorithm: {algorithm}
+Limit history: {limit_history_days}
 
 Usage:
   # Run with default (hardcoded) parameters
   uv run {Path(output_path).name}
 
   # Override parameters
-  uv run {Path(output_path).name} --forecast 14days --seasonal-period 12
+  uv run {Path(output_path).name} --forecast 14days --algorithm linear --limit-history 30days
 """
 
 import argparse
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 from dateutil import parser as dateparser
@@ -455,6 +594,8 @@ DEFAULT_VALUES_COL = '{values_col}'
 DEFAULT_DATES_COL = '{dates_col}'
 DEFAULT_FORECAST_DAYS = {forecast_days}
 DEFAULT_SEASONAL_PERIOD = {seasonal_period if seasonal_period else 'None'}
+DEFAULT_ALGORITHM = '{algorithm}'
+DEFAULT_LIMIT_HISTORY = {limit_history_days if limit_history_days else 'None'}
 
 {'# ' + chr(10) + '# '.join(open(__file__).read().split(chr(10))[20:])}
 
@@ -465,11 +606,18 @@ if __name__ == '__main__':
     parser.add_argument('--dates', type=str, default=DEFAULT_DATES_COL, help='Column name for dates')
     parser.add_argument('--forecast', type=str, default='{{DEFAULT_FORECAST_DAYS}}days', help='Forecast period (e.g., 7days, 2weeks, 1month)')
     parser.add_argument('--seasonal-period', type=int, default=DEFAULT_SEASONAL_PERIOD, help='Seasonal period (auto-detect if None)')
+    parser.add_argument('--algorithm', type=str, default=DEFAULT_ALGORITHM, choices=['holt-winters', 'linear', 'moving-average'], help='Forecasting algorithm')
+    parser.add_argument('--limit-history', type=str, default=None, help='Limit historical data to last X (e.g., 30days)')
 
     args = parser.parse_args()
 
     # Parse forecast days
     forecast_days = parse_time_string(args.forecast)
+
+    # Parse limit history if provided
+    limit_history_days = None
+    if args.limit_history:
+        limit_history_days = parse_time_string(args.limit_history)
 
     # Load and clean data
     dates, values, invalid_reports = load_and_clean_data(
@@ -486,7 +634,9 @@ if __name__ == '__main__':
         dates,
         values,
         forecast_days,
-        args.seasonal_period
+        args.seasonal_period,
+        algorithm=args.algorithm,
+        limit_history_days=limit_history_days
     )
 
     # Create interactive plot
@@ -509,12 +659,18 @@ if __name__ == '__main__':
 def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(
-        description='Time Series Forecaster - Extrapolate CSV data with Holt-Winters',
+        description='Time Series Forecaster - Extrapolate CSV data with multiple algorithms',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic usage
+  # Basic usage with Holt-Winters
   forecast --csv homeassistant_export.csv --values voltage --dates timestamp --forecast 7days
+
+  # Use linear trend forecasting
+  forecast --csv data.csv --values temperature --dates timestamp --forecast 2weeks --algorithm linear
+
+  # Limit to last 30 days of data, use moving average
+  forecast --csv data.csv --values cpu_usage --dates timestamp --forecast 7days --limit-history 30days --algorithm moving-average
 
   # Save a reusable copy with hardcoded defaults
   forecast --csv homeassistant_export.csv --values voltage --dates timestamp --forecast 7days --save-script my_battery_forecast.py
@@ -523,14 +679,16 @@ Examples:
   uv run my_battery_forecast.py
 
   # Override saved defaults for one run
-  uv run my_battery_forecast.py --forecast 2weeks --seasonal-period 12
-
-  # Auto-detect seasonality with custom parameters
-  uv run forecast.py --csv data.csv --values temperature --dates datetime --forecast 1month
+  uv run my_battery_forecast.py --forecast 2weeks --seasonal-period 12 --algorithm linear
 
 Supported time formats:
   7days, 2weeks, 1month (30 days), 3months, 1year
   (any combination of numbers with 'days', 'weeks', 'months', 'years')
+
+Algorithms:
+  holt-winters (default): Exponential smoothing with trend and seasonality
+  linear: Linear regression on recent trend
+  moving-average: Simple moving average extrapolation
         """
     )
 
@@ -539,6 +697,8 @@ Supported time formats:
     parser.add_argument('--dates', type=str, required=True, help='Column name for timestamps')
     parser.add_argument('--forecast', type=str, default='7days', help='Forecast period (e.g., 7days, 2weeks, 1month)')
     parser.add_argument('--seasonal-period', type=int, default=None, help='Seasonal period (auto-detect if omitted, e.g., 24 for hourly data)')
+    parser.add_argument('--limit-history', type=str, default=None, help='Limit historical data to last X (e.g., 30days, 2weeks, 1month)')
+    parser.add_argument('--algorithm', type=str, default='holt-winters', choices=['holt-winters', 'linear', 'moving-average'], help='Forecasting algorithm to use')
     parser.add_argument('--save-script', type=str, help='Save a self-contained script with these parameters')
 
     args = parser.parse_args()
@@ -549,6 +709,15 @@ Supported time formats:
     except ValueError as e:
         print(f"❌ Error: {e}")
         sys.exit(1)
+
+    # Parse limit history if provided
+    limit_history_days = None
+    if args.limit_history:
+        try:
+            limit_history_days = parse_time_string(args.limit_history)
+        except ValueError as e:
+            print(f"❌ Error parsing --limit-history: {e}")
+            sys.exit(1)
 
     print(f"🎯 Forecasting {forecast_days} days into the future")
 
@@ -573,7 +742,9 @@ Supported time formats:
             dates,
             values,
             forecast_days,
-            args.seasonal_period
+            args.seasonal_period,
+            algorithm=args.algorithm,
+            limit_history_days=limit_history_days
         )
     except Exception as e:
         print(f"❌ Failed to create forecast: {e}")
@@ -598,7 +769,9 @@ Supported time formats:
                 args.dates,
                 forecast_days,
                 args.seasonal_period,
-                args.save_script
+                args.save_script,
+                args.algorithm,
+                limit_history_days
             )
             print(f"✅ Script saved successfully")
             print(f"   Run it with: uv run {args.save_script}")

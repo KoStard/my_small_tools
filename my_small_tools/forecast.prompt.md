@@ -18,6 +18,8 @@
 - [x] Override saved parameters via CLI
 - [x] Handle missing timestamps via resampling
 - [x] Danger zone markers for voltage data (3.3V line)
+- [x] Limit historical data to last X hours/days/weeks/etc
+- [x] Multiple forecasting algorithms (Holt-Winters, Linear trend, Moving average)
 - [ ] Export forecast to CSV
 - [ ] Confidence intervals on plot
 - [ ] Multiple columns in one run
@@ -47,12 +49,19 @@
 | `--forecast` | string | No | `7days` | Future period (see time formats) |
 | `--seasonal-period` | int | No | Auto | Seasonality length (e.g., 24) |
 | `--save-script` | string | No | - | Save standalone script path |
+| `--limit-history` | string | No | - | Limit historical data to last X (e.g., `30days`, `2weeks`, `1month`) |
+| `--algorithm` | string | No | `holt-winters` | Forecasting algorithm: `holt-winters`, `linear`, `moving-average` |
 
 ### Time Formats
 - `Xd` or `Xdays` → X days
 - `Xw` or `Xweeks` → X × 7 days
 - `Xm` or `Xmonths` → X × 30 days
 - `Xy` or `Xyears` → X × 365 days
+
+### Algorithms
+- `holt-winters` (default): Exponential smoothing with trend and seasonality detection
+- `linear`: Linear regression on recent trend (good for steady trends)
+- `moving-average`: Simple moving average extrapolation (good for stable data)
 ***
 
 ## Input CSV Specification
@@ -143,3 +152,7 @@ DEFAULT_SEASONAL_PERIOD = 24
 - **Plotly**: Browser over tkinter (cross-platform, more features)
 - **Script generation**: `exec()` style copying (simple but effective)
 - **Default values**: Hardcoded in generated script (transparent, editable)
+- **History limiting**: Applied after data cleaning, before forecasting
+- **Algorithm selection**: Pluggable forecast functions with consistent interface
+- **Linear algorithm**: Uses numpy polyfit for trend extrapolation
+- **Moving average**: Uses pandas rolling mean for smoothing
