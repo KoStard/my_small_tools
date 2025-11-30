@@ -11,9 +11,14 @@ requires-python = ">=3.12"
 dependencies = [
     "appdirs>=1.4.4",
     "prompt_toolkit>=3.0",
+    "pandas>=2.0",
+    "statsmodels>=0.14",
+    "plotly>=5.0",
+    "python-dateutil>=2.8",
 ]
 
 [project.scripts]
 sync-knowledge-base = "my_small_tools.sync_knowledge_base:main"
 hermes-research = "my_small_tools.hermes_research.hermes_research_manager:main"
 ls-time = "my_small_tools.ls_time:main"
+forecast = "my_small_tools.forecast:main"
