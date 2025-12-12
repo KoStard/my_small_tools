@@ -22,9 +22,11 @@ import json
 import os
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from threading import Lock
 from typing import Optional
 
 import click
@@ -358,25 +360,39 @@ class WritingAnalyzer:
         doc: ParsedDocument,
         cache: Optional[AnalysisCache] = None,
         force_reanalyze: Optional[set[int]] = None,
-        progress_callback=None
+        progress_callback=None,
+        max_workers: int = 5
     ) -> DocumentAnalysis:
         """
-        Analyze all paragraphs in document.
+        Analyze all paragraphs in document with parallel processing.
         
         Args:
             doc: Parsed document
             cache: Optional cache to use/update
             force_reanalyze: Set of paragraph indices to force re-analyze
             progress_callback: Optional callback(current, total) for progress
+            max_workers: Maximum number of parallel API requests
         """
         force_reanalyze = force_reanalyze or set()
-        paragraph_analyses = []
-        
         total = len(doc.raw_paragraphs)
+        
+        # Results dict to maintain order: {idx: analysis}
+        results = {}
+        
+        # Thread-safe progress tracking
+        progress_lock = Lock()
+        completed_count = [0]  # Use list for mutability in closure
+        
+        def update_progress():
+            with progress_lock:
+                completed_count[0] += 1
+                if progress_callback:
+                    progress_callback(completed_count[0], total)
+        
+        # Identify paragraphs that need analysis
+        to_analyze = []  # List of (idx, para, context)
+        
         for idx, para in enumerate(doc.raw_paragraphs):
-            if progress_callback:
-                progress_callback(idx, total)
-            
             para_hash = self._hash_paragraph(para.text)
             
             # Check cache
@@ -385,24 +401,60 @@ class WritingAnalyzer:
                 cache.entries[para_hash].cache_version == CACHE_VERSION and
                 idx not in force_reanalyze):
                 # Use cached result
-                paragraph_analyses.append(cache.entries[para_hash].analysis)
-                continue
-            
-            # Analyze paragraph
-            context = self._get_context(doc.raw_paragraphs, idx, doc)
-            analysis = self._analyze_paragraph(para, idx, context)
-            paragraph_analyses.append(analysis)
-            
-            # Update cache
-            if cache:
-                cache.entries[para_hash] = CacheEntry(
-                    paragraph_hash=para_hash,
-                    cache_version=CACHE_VERSION,
-                    analysis=analysis
-                )
+                results[idx] = cache.entries[para_hash].analysis
+                update_progress()
+            else:
+                # Queue for analysis
+                context = self._get_context(doc.raw_paragraphs, idx, doc)
+                to_analyze.append((idx, para, context))
         
-        if progress_callback:
-            progress_callback(total, total)
+        # Analyze paragraphs in parallel
+        if to_analyze:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all analysis tasks
+                future_to_idx = {}
+                for idx, para, context in to_analyze:
+                    future = executor.submit(self._analyze_paragraph, para, idx, context)
+                    future_to_idx[future] = (idx, para)
+                
+                # Collect results as they complete
+                for future in as_completed(future_to_idx):
+                    idx, para = future_to_idx[future]
+                    try:
+                        analysis = future.result()
+                        results[idx] = analysis
+                        
+                        # Update cache
+                        if cache:
+                            para_hash = self._hash_paragraph(para.text)
+                            cache.entries[para_hash] = CacheEntry(
+                                paragraph_hash=para_hash,
+                                cache_version=CACHE_VERSION,
+                                analysis=analysis
+                            )
+                        
+                        update_progress()
+                    except Exception as e:
+                        console.print(f"[red]Error analyzing paragraph {idx + 1}: {e}[/red]")
+                        # Create fallback analysis
+                        results[idx] = ParagraphAnalysis(
+                            paragraph_index=idx,
+                            paragraph_hash=self._hash_paragraph(para.text),
+                            raw_text=para.text,
+                            sentences=[SentenceAnalysis(
+                                text=para.text,
+                                category=SentenceCategory.UNKNOWN,
+                                issues=[],
+                                grade="?",
+                                improvements=[]
+                            )],
+                            overall_grade="?",
+                            flow_notes=f"Analysis failed: {e}"
+                        )
+                        update_progress()
+        
+        # Convert results dict to ordered list
+        paragraph_analyses = [results[idx] for idx in sorted(results.keys())]
         
         # Generate executive summary
         doc_hash = self._hash_document(doc)
@@ -428,13 +480,28 @@ class WritingAnalyzer:
     
     def _get_context(self, paragraphs: list[Paragraph], idx: int, doc: Optional[ParsedDocument] = None) -> dict:
         """Get surrounding context for a paragraph."""
-        prev_text = paragraphs[idx - 1].text if idx > 0 else None
-        next_text = paragraphs[idx + 1].text if idx < len(paragraphs) - 1 else None
+        # Gather 2 paragraphs before and after for better context
+        context_window = 2
+        
+        before_paragraphs = []
+        for i in range(max(0, idx - context_window), idx):
+            before_paragraphs.append({
+                "index": i + 1,
+                "text": paragraphs[i].text
+            })
+        
+        after_paragraphs = []
+        for i in range(idx + 1, min(len(paragraphs), idx + context_window + 1)):
+            after_paragraphs.append({
+                "index": i + 1,
+                "text": paragraphs[i].text
+            })
         
         context = {
-            "previous": prev_text,
-            "next": next_text,
-            "position": f"{idx + 1} of {len(paragraphs)}"
+            "before": before_paragraphs,
+            "after": after_paragraphs,
+            "current_index": idx + 1,
+            "total_paragraphs": len(paragraphs)
         }
         
         # Include any callouts that might contain instructions for the AI
@@ -455,29 +522,58 @@ class WritingAnalyzer:
     ) -> ParagraphAnalysis:
         """Analyze a single paragraph using AI."""
         
-        prompt = f"""Analyze this paragraph from a persuasive document.
+        # Build context display with clear focus indicator
+        context_display = []
+        
+        # Before paragraphs
+        if context['before']:
+            context_display.append("PRECEDING CONTEXT:")
+            for para_info in context['before']:
+                context_display.append(f"  ¶{para_info['index']}: {para_info['text']}")
+            context_display.append("")
+        else:
+            context_display.append("(start of document)")
+            context_display.append("")
+        
+        # Current paragraph - clearly marked
+        context_display.append(f">>> ANALYZE THIS PARAGRAPH (¶{context['current_index']} of {context['total_paragraphs']}): <<<")
+        context_display.append(para.text)
+        context_display.append("")
+        
+        # After paragraphs
+        if context['after']:
+            context_display.append("FOLLOWING CONTEXT:")
+            for para_info in context['after']:
+                context_display.append(f"  ¶{para_info['index']}: {para_info['text']}")
+        else:
+            context_display.append("(end of document)")
+        
+        prompt = f"""Analyze the marked paragraph from a document. The document may be a draft, template, email, or any form of writing.
 
-PARAGRAPH (#{idx + 1}):
-{para.text}
-
-CONTEXT:
-- Previous paragraph: {context['previous'] or '(start of document)'}
-- Next paragraph: {context['next'] or '(end of document)'}
-- Position: {context['position']}
+{'\n'.join(context_display)}
 
 {f"AUTHOR INSTRUCTIONS (from callouts):\n{context['callouts']}\n" if 'callouts' in context else ""}
 
-Analyze each sentence. For each sentence provide:
+ANALYSIS GUIDELINES:
+- Analyze what's actually present without complaining about incompleteness
+- Accept drafts, templates, placeholders (like "[Please write the body]"), subject lines, etc.
+- If content is minimal or placeholder text, provide brief, constructive feedback
+- Focus on the paragraph marked with >>> <<<
+- Use surrounding context to understand flow and transitions where relevant
+- For templates/placeholders, comment on the structural intent rather than missing content
+
+Analyze each sentence or element. For each provide:
 1. Category: One of [claim, evidence, reasoning, transition, hook, context, cta, unknown]
-2. Issues: List any problems from [vague_claim, unsupported, so_what_gap, weak_opening, buried_lead, passive_voice, weasel_words, missing_transition, redundant, too_long]
+2. Issues: List any actual problems from [vague_claim, unsupported, so_what_gap, weak_opening, buried_lead, passive_voice, weasel_words, missing_transition, redundant, too_long]
    - Each issue must have a severity from [error, warning, info]:
      - error: Must fix - blocks understanding
      - warning: Should fix - weakens argument  
      - info: Could improve - polish
-3. Grade: A-F based on effectiveness
-4. Improvements: Specific suggestions
+   - Do NOT report placeholder text or template markers as issues
+3. Grade: A-F based on effectiveness of actual content (use "?" for pure placeholders)
+4. Improvements: Specific, actionable suggestions for what IS there
 
-Also assess paragraph flow and overall grade.
+For flow_notes, provide constructive analysis of the actual content. For templates/drafts, note structural purpose.
 
 Respond in this exact JSON format:
 {{
@@ -493,7 +589,7 @@ Respond in this exact JSON format:
     }}
   ],
   "overall_grade": "B+",
-  "flow_notes": "How the paragraph flows and connects"
+  "flow_notes": "Detailed analysis of paragraph flow and structure. Use newlines to separate different points. Include specific suggestions for improvement if applicable."
 }}"""
 
         response = self.client.chat.completions.create(
@@ -826,6 +922,7 @@ class OutputRenderer:
             border-top: 1px solid #2a2a4a;
             font-style: italic;
             color: #888;
+            white-space: pre-wrap;
         }}
         .tooltip {{
             display: none;
@@ -1244,9 +1341,10 @@ def cli():
 @click.option('--reanalyze-range', type=str, 
               help='Range of paragraphs to re-analyze, e.g., "3-7"')
 @click.option('--model', default=DEFAULT_MODEL, help='OpenAI model to use')
+@click.option('--workers', default=5, type=int, help='Max parallel API requests (default: 5)')
 def analyze(input_file: Path, output: Optional[Path], output_format: str,
             no_cache: bool, reanalyze: tuple, reanalyze_range: Optional[str],
-            model: str):
+            model: str, workers: int):
     """
     Analyze a document for writing quality.
     
@@ -1315,7 +1413,8 @@ def analyze(input_file: Path, output: Optional[Path], output_format: str,
             doc, 
             cache=cache,
             force_reanalyze=force_reanalyze,
-            progress_callback=update_progress
+            progress_callback=update_progress,
+            max_workers=workers
         )
     
     analysis.source_path = str(input_file)
