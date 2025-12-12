@@ -30,6 +30,7 @@ from threading import Lock
 from typing import Optional
 
 import click
+import marko
 from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel
@@ -717,6 +718,26 @@ Respond in this exact JSON format:
 class OutputRenderer:
     """Renders analysis results to various formats."""
     
+    def __init__(self):
+        self.markdown_parser = marko.Markdown()
+    
+    def _render_markdown_block(self, text: str) -> str:
+        """Convert markdown text to HTML (block-level, keeps <p> tags)."""
+        if not text:
+            return ""
+        return self.markdown_parser.convert(text)
+    
+    def _render_markdown_inline(self, text: str) -> str:
+        """Convert markdown text to HTML (inline, strips outer <p> tags)."""
+        if not text:
+            return ""
+        html = self.markdown_parser.convert(text)
+        # Strip outer <p> tags for inline rendering
+        html = html.strip()
+        if html.startswith('<p>') and html.endswith('</p>'):
+            html = html[3:-4]
+        return html
+    
     # Color scheme for categories
     CATEGORY_COLORS = {
         SentenceCategory.CLAIM: "#3498db",       # Blue
@@ -802,7 +823,7 @@ class OutputRenderer:
                     <span class="sentence" 
                           style="background-color: {color}20; border-left: 3px solid {border_color};"
                           data-tooltip="{tooltip.replace('"', '&quot;')}">
-                        {sent.text}
+                        {self._render_markdown_inline(sent.text)}
                         <span class="grade" style="background-color: {grade_color};">{sent.grade}</span>
                     </span>
                 ''')
@@ -817,7 +838,7 @@ class OutputRenderer:
                     <div class="para-content">
                         {' '.join(sentences_html)}
                     </div>
-                    {f'<div class="flow-notes">{para.flow_notes}</div>' if para.flow_notes else ''}
+                    {f'<div class="flow-notes">{self._render_markdown_block(para.flow_notes)}</div>' if para.flow_notes else ''}
                 </div>
             ''')
         
@@ -830,6 +851,29 @@ class OutputRenderer:
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Writing Analysis - {analysis.source_path}</title>
     <style>
+        /* Reset default styles for rendered markdown */
+        .para-content p {{ margin: 0; display: inline; }}
+        .para-content strong {{ font-weight: bold; }}
+        .para-content em {{ font-style: italic; }}
+        .para-content code {{ 
+            background: #2a2a4a; 
+            padding: 2px 4px; 
+            border-radius: 3px; 
+            font-family: 'Courier New', monospace;
+        }}
+        .para-content a {{ color: #3498db; text-decoration: none; }}
+        .para-content a:hover {{ text-decoration: underline; }}
+        
+        .summary p {{ margin: 0.5em 0; }}
+        .summary p:first-child {{ margin-top: 0; }}
+        .summary p:last-child {{ margin-bottom: 0; }}
+        .summary ul, .summary ol {{ margin: 0.5em 0; padding-left: 1.5em; }}
+        
+        .flow-notes p {{ margin: 0.5em 0; }}
+        .flow-notes p:first-child {{ margin-top: 0; }}
+        .flow-notes p:last-child {{ margin-bottom: 0; }}
+        .flow-notes ul, .flow-notes ol {{ margin: 0.5em 0; padding-left: 1.5em; }}
+        
         * {{ box-sizing: border-box; }}
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -997,7 +1041,7 @@ class OutputRenderer:
             </div>
             <div class="overall-grade" style="background-color: {overall_color};">{analysis.overall_grade}</div>
         </div>
-        <p style="margin-top: 15px;">{analysis.executive_summary}</p>
+        <div style="margin-top: 15px;">{self._render_markdown_block(analysis.executive_summary)}</div>
     </div>
     
     <div class="legend">
