@@ -389,7 +389,7 @@ class WritingAnalyzer:
                 continue
             
             # Analyze paragraph
-            context = self._get_context(doc.raw_paragraphs, idx)
+            context = self._get_context(doc.raw_paragraphs, idx, doc)
             analysis = self._analyze_paragraph(para, idx, context)
             paragraph_analyses.append(analysis)
             
@@ -426,15 +426,26 @@ class WritingAnalyzer:
         all_text = '\n'.join(p.text for p in doc.raw_paragraphs)
         return hashlib.sha256(all_text.encode()).hexdigest()[:16]
     
-    def _get_context(self, paragraphs: list[Paragraph], idx: int) -> dict:
+    def _get_context(self, paragraphs: list[Paragraph], idx: int, doc: Optional[ParsedDocument] = None) -> dict:
         """Get surrounding context for a paragraph."""
         prev_text = paragraphs[idx - 1].text if idx > 0 else None
         next_text = paragraphs[idx + 1].text if idx < len(paragraphs) - 1 else None
-        return {
+        
+        context = {
             "previous": prev_text,
             "next": next_text,
             "position": f"{idx + 1} of {len(paragraphs)}"
         }
+        
+        # Include any callouts that might contain instructions for the AI
+        if doc and doc.callouts:
+            callout_texts = []
+            for callout in doc.callouts:
+                callout_texts.append(f"[!{callout.callout_type}] {callout.title or ''}: {callout.content}")
+            if callout_texts:
+                context["callouts"] = "\n".join(callout_texts)
+        
+        return context
     
     def _analyze_paragraph(
         self, 
@@ -453,6 +464,8 @@ CONTEXT:
 - Previous paragraph: {context['previous'] or '(start of document)'}
 - Next paragraph: {context['next'] or '(end of document)'}
 - Position: {context['position']}
+
+{f"AUTHOR INSTRUCTIONS (from callouts):\n{context['callouts']}\n" if 'callouts' in context else ""}
 
 Analyze each sentence. For each sentence provide:
 1. Category: One of [claim, evidence, reasoning, transition, hook, context, cta, unknown]
@@ -825,8 +838,55 @@ class OutputRenderer:
             z-index: 1000;
             font-size: 14px;
             line-height: 1.5;
+            pointer-events: none;
         }}
         .tooltip.visible {{ display: block; }}
+        .modal {{
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #0f0f23;
+            border: 2px solid #3498db;
+            padding: 25px;
+            border-radius: 12px;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+            z-index: 2000;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }}
+        .modal.visible {{ display: block; }}
+        .modal-overlay {{
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.7);
+            z-index: 1999;
+        }}
+        .modal-overlay.visible {{ display: block; }}
+        .modal-close {{
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            font-size: 24px;
+            cursor: pointer;
+            color: #888;
+            background: none;
+            border: none;
+        }}
+        .modal-close:hover {{ color: #fff; }}
+        .modal-content {{
+            margin-top: 20px;
+        }}
+        .sentence.pinned {{
+            outline: 2px solid #3498db;
+            outline-offset: 2px;
+        }}
     </style>
 </head>
 <body>
@@ -852,21 +912,102 @@ class OutputRenderer:
     {''.join(paragraphs_html)}
     
     <div class="tooltip" id="tooltip"></div>
+    <div class="modal-overlay" id="modalOverlay"></div>
+    <div class="modal" id="modal">
+        <button class="modal-close" id="modalClose">&times;</button>
+        <div class="modal-content" id="modalContent"></div>
+    </div>
     
     <script>
         const tooltip = document.getElementById('tooltip');
+        const modal = document.getElementById('modal');
+        const modalOverlay = document.getElementById('modalOverlay');
+        const modalContent = document.getElementById('modalContent');
+        const modalClose = document.getElementById('modalClose');
+        
+        let pinnedElement = null;
+        
+        // Smart tooltip positioning
+        function positionTooltip(e) {{
+            const tooltipRect = tooltip.getBoundingClientRect();
+            const viewportWidth = window.innerWidth;
+            const viewportHeight = window.innerHeight;
+            
+            let x = e.clientX + 15;
+            let y = e.clientY + 15;
+            
+            // Adjust if tooltip goes off right edge
+            if (x + tooltipRect.width > viewportWidth - 10) {{
+                x = e.clientX - tooltipRect.width - 15;
+            }}
+            
+            // Adjust if tooltip goes off bottom edge
+            if (y + tooltipRect.height > viewportHeight - 10) {{
+                y = e.clientY - tooltipRect.height - 15;
+            }}
+            
+            // Ensure tooltip doesn't go off top or left
+            x = Math.max(10, x);
+            y = Math.max(10, y);
+            
+            tooltip.style.left = x + 'px';
+            tooltip.style.top = y + 'px';
+        }}
+        
         document.querySelectorAll('.sentence').forEach(el => {{
+            // Hover tooltip
             el.addEventListener('mouseenter', (e) => {{
                 tooltip.innerHTML = el.dataset.tooltip;
                 tooltip.classList.add('visible');
+                positionTooltip(e);
             }});
+            
             el.addEventListener('mousemove', (e) => {{
-                tooltip.style.left = (e.clientX + 15) + 'px';
-                tooltip.style.top = (e.clientY + 15) + 'px';
+                positionTooltip(e);
             }});
+            
             el.addEventListener('mouseleave', () => {{
                 tooltip.classList.remove('visible');
             }});
+            
+            // Double-click to pin
+            el.addEventListener('dblclick', (e) => {{
+                e.preventDefault();
+                
+                // Clear previous pinned state
+                if (pinnedElement) {{
+                    pinnedElement.classList.remove('pinned');
+                }}
+                
+                // Set new pinned element
+                pinnedElement = el;
+                el.classList.add('pinned');
+                
+                // Show modal with sentence details
+                modalContent.innerHTML = el.dataset.tooltip;
+                modal.classList.add('visible');
+                modalOverlay.classList.add('visible');
+            }});
+        }});
+        
+        // Close modal handlers
+        function closeModal() {{
+            modal.classList.remove('visible');
+            modalOverlay.classList.remove('visible');
+            if (pinnedElement) {{
+                pinnedElement.classList.remove('pinned');
+                pinnedElement = null;
+            }}
+        }}
+        
+        modalClose.addEventListener('click', closeModal);
+        modalOverlay.addEventListener('click', closeModal);
+        
+        // Close on Escape key
+        document.addEventListener('keydown', (e) => {{
+            if (e.key === 'Escape' && modal.classList.contains('visible')) {{
+                closeModal();
+            }}
         }});
     </script>
 </body>
