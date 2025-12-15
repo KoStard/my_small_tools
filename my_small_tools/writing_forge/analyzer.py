@@ -70,6 +70,7 @@ class WritingAnalyzer:
         force_reanalyze: Optional[set[int]] = None,
         progress_callback=None,
         max_workers: int = 5,
+        extra_prompt: str = "",
     ) -> DocumentAnalysis:
         """
         Analyze all paragraphs in document with parallel processing.
@@ -116,6 +117,7 @@ class WritingAnalyzer:
             else:
                 # Queue for analysis
                 context = self._get_context(doc.raw_paragraphs, idx, doc)
+                context['extra_prompt'] = extra_prompt
                 to_analyze.append((idx, para, context))
 
         # Analyze paragraphs in parallel
@@ -251,6 +253,12 @@ class WritingAnalyzer:
         paragraph_index = context["paragraph_index"]
         total_paragraphs = context["total_paragraphs"]
 
+        # Incorporate extra prompt from user
+        extra = context.get('extra_prompt', '')
+        extra_instruction_section = ""
+        if extra:
+            extra_instruction_section = f"\nADDITIONAL USER INSTRUCTIONS:\n{extra}\n"
+
         prompt = f"""<document>
 {document_text}
 </document>
@@ -279,8 +287,7 @@ Analyze each sentence or element:
 - Grade: A+ to F based on effectiveness (use "?" for pure placeholders)
 - Improvements: Specific, actionable suggestions. If there is a task included in meta-text, act on it.
 - If it's a placeholder, and you have enough information to write it, suggest an option.
-
-For flow_notes, provide constructive analysis of actual content. For templates/drafts, note structural purpose.
+{extra_instruction_section}For flow_notes, provide constructive analysis of actual content. For templates/drafts, note structural purpose.
 
 You must make a tool call for this analysis using JSON syntax!
 </instruction>"""

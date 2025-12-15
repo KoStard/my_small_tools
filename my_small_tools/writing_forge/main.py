@@ -61,6 +61,12 @@ def cli():
 @click.option(
     "--workers", default=5, type=int, help="Max parallel API requests (default: 5)"
 )
+@click.option(
+    "--extra-prompt",
+    type=str,
+    default="",
+    help="Additional instructions to include in the analysis prompt",
+)
 def analyze(
     input_file: Path,
     output: Optional[Path],
@@ -70,6 +76,7 @@ def analyze(
     reanalyze_range: Optional[str],
     model: str,
     workers: int,
+    extra_prompt: str = "",
 ):
     """
     Analyze a document for writing quality.
@@ -149,6 +156,7 @@ def analyze(
             force_reanalyze=force_reanalyze,
             progress_callback=update_progress,
             max_workers=workers,
+            extra_prompt=extra_prompt,
         )
 
     analysis.source_path = str(input_file)
