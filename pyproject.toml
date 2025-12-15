@@ -17,9 +17,16 @@ dependencies = [
     "python-dateutil>=2.8",
     "Pillow>=10.0.0",
     "scipy>=1.10.0",
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "openai>=1.0.0",
+    "pydantic>=2.0.0",
+    "marko>=2.0.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [project.scripts]
+writing-forge = "my_small_tools.writing_forge.main:cli"
 sync-knowledge-base = "my_small_tools.sync_knowledge_base:main"
 hermes-research = "my_small_tools.hermes_research.hermes_research_manager:main"
 ls-time = "my_small_tools.ls_time:main"
