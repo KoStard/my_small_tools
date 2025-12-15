@@ -1,7 +1,6 @@
 import hashlib
 import json
 import os
-import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 from typing import Optional
@@ -10,12 +9,13 @@ from openai import OpenAI
 from rich.console import Console
 
 from .models import (
+    AIParagraphAnalysis,
     AnalysisCache,
+    CalloutBlock,
     CacheEntry,
     DocumentAnalysis,
     Issue,
     IssueSeverity,
-    IssueType,
     Paragraph,
     ParagraphAnalysis,
     ParsedDocument,
@@ -36,7 +36,7 @@ DEFAULT_MODEL = "gpt-4o"  # OpenAI model
 
 console = Console()
 
-CACHE_VERSION = '1.0'
+CACHE_VERSION = "1.0"
 
 
 # =============================================================================
@@ -52,11 +52,16 @@ class WritingAnalyzer:
         if not api_key:
             raise ValueError("OPENROUTER_API_KEY environment variable not set")
 
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url="https://openrouter.ai/api/v1"
-        )
+        self.client = OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
         self.model = model
+
+        # Create the function definition for tool calling
+        self.analysis_function = {
+            "type": "function",
+            "name": "submic_paragraph_analysis_report",
+            "description": "Submit the report of the paragraph analysis from a document for writing quality",
+            "parameters": AIParagraphAnalysis.model_json_schema(),
+        }
 
     def analyze_document(
         self,
@@ -64,7 +69,7 @@ class WritingAnalyzer:
         cache: Optional[AnalysisCache] = None,
         force_reanalyze: Optional[set[int]] = None,
         progress_callback=None,
-        max_workers: int = 5
+        max_workers: int = 5,
     ) -> DocumentAnalysis:
         """
         Analyze all paragraphs in document with parallel processing.
@@ -120,7 +125,8 @@ class WritingAnalyzer:
                 future_to_idx = {}
                 for idx, para, context in to_analyze:
                     future = executor.submit(
-                        self._analyze_paragraph, para, idx, context)
+                        self._analyze_paragraph, para, idx, context
+                    )
                     future_to_idx[future] = (idx, para)
 
                 # Collect results as they complete
@@ -136,13 +142,14 @@ class WritingAnalyzer:
                             cache.entries[para_hash] = CacheEntry(
                                 paragraph_hash=para_hash,
                                 cache_version=CACHE_VERSION,
-                                analysis=analysis
+                                analysis=analysis,
                             )
 
                         update_progress()
                     except Exception as e:
                         console.print(
-                            f"[red]Error analyzing paragraph {idx + 1}: {e}[/red]")
+                            f"[red]Error analyzing paragraph {idx + 1}: {e}[/red]"
+                        )
                         # Create fallback analysis
                         results[idx] = ParagraphAnalysis(
                             paragraph_index=idx,
@@ -154,11 +161,11 @@ class WritingAnalyzer:
                                     category=SentenceCategory.UNKNOWN,
                                     issues=[],
                                     grade="?",
-                                    improvements=[]
+                                    improvements=[],
                                 )
                             ],
                             overall_grade="?",
-                            flow_notes=f"Analysis failed: {e}"
+                            flow_notes=f"Analysis failed: {e}",
                         )
                         update_progress()
 
@@ -175,7 +182,7 @@ class WritingAnalyzer:
             document_hash=doc_hash,
             paragraphs=paragraph_analyses,
             executive_summary=summary,
-            overall_grade=overall
+            overall_grade=overall,
         )
 
     def _hash_paragraph(self, text: str) -> str:
@@ -184,54 +191,77 @@ class WritingAnalyzer:
 
     def _hash_document(self, doc: ParsedDocument) -> str:
         """Generate hash for entire document."""
-        all_text = '\n'.join(p.text for p in doc.raw_paragraphs)
+        all_text = "\n".join(p.text for p in doc.raw_paragraphs)
         return hashlib.sha256(all_text.encode()).hexdigest()[:16]
 
-    def _get_context(self, paragraphs: list[Paragraph], idx: int, doc: Optional[ParsedDocument] = None) -> dict:
+    def _get_context(
+        self,
+        paragraphs: list[Paragraph],
+        idx: int,
+        doc: Optional[ParsedDocument] = None,
+    ) -> dict:
         """Get surrounding context for a paragraph."""
         
         context = {
-            "all_paragraphs": [p.text for p in paragraphs],
-            "current_index": idx + 1,
-            "total_paragraphs": len(paragraphs)
+            "target_paragraph": paragraphs[idx],
+            "paragraph_index": idx,
+            "total_paragraphs": len(paragraphs),
+            "doc": doc,
         }
-        
-        # Include any callouts that might contain instructions for the AI
-        if doc and doc.callouts:
-            callout_texts = []
-            for callout in doc.callouts:
-                callout_texts.append(f"[!{callout.callout_type}] {callout.title or ''}: {callout.content}")
-            if callout_texts:
-                context["callouts"] = "\n".join(callout_texts)
         
         return context
 
+    def _reconstruct_document(self, doc: ParsedDocument) -> str:
+        """Reconstruct the full document text with callouts in their original positions."""
+        if not doc:
+            return ""
+        
+        lines = []
+        
+        for section in doc.sections:
+            # Add heading if present
+            if section.title:
+                lines.append(f"{'#' * section.level} {section.title}")
+                lines.append("")
+            
+            # Add content (paragraphs and callouts in order)
+            for item in section.content:
+                if isinstance(item, Paragraph):
+                    lines.append(item.text)
+                    lines.append("")
+                elif isinstance(item, CalloutBlock):
+                    collapse = "-" if item.is_collapsed else ""
+                    title_part = f" {item.title}" if item.title else ""
+                    lines.append(f"> [!{item.callout_type}]{collapse}{title_part}")
+                    for content_line in item.content.split("\n"):
+                        lines.append(f"> {content_line}")
+                    lines.append("")
+        
+        return "\n".join(lines).strip()
+
     def _analyze_paragraph(
-        self,
-        para: Paragraph,
-        idx: int,
-        context: dict
+        self, para: Paragraph, idx: int, context: dict
     ) -> ParagraphAnalysis:
         """Analyze a single paragraph using AI."""
 
-        # Build context display with clear focus indicator
-        context_display = []
+        # Reconstruct full document with callouts in place
+        doc = context.get("doc")
+        document_text = self._reconstruct_document(doc) if doc else para.text
         
-        all_paragraphs = context['all_paragraphs']
-        current_index = context['current_index']
-        
-        context_display.append("DOCUMENT CONTEXT:")
-        for i, para_text in enumerate(all_paragraphs):
-            if i + 1 == current_index:
-                context_display.append(f"\n>>> ANALYZE THIS PARAGRAPH (¶{current_index} of {len(all_paragraphs)}): <<<\n{para_text}\n")
-            else:
-                context_display.append(f"¶{i + 1}: {para_text}")
+        paragraph_index = context["paragraph_index"]
+        total_paragraphs = context["total_paragraphs"]
 
-        prompt = f"""Analyze the marked paragraph from a document. The document may be a draft, template, email, or any form of writing.
+        prompt = f"""<document>
+{document_text}
+</document>
 
-{''.join(context_display)}
+<instruction>
+You are analyzing paragraph {paragraph_index + 1} of {total_paragraphs} from the document above.
 
-{f"AUTHOR INSTRUCTIONS (from callouts):\n{context['callouts']}\n" if 'callouts' in context else ""}
+TARGET PARAGRAPH TO ANALYZE:
+{para.text}
+
+The document may be a draft, template, email, or any form of writing. Pay attention to any callout blocks (marked with "> [!type]") in the document as they may contain author instructions or context.
 
 ANALYSIS GUIDELINES:
 - Analyze what's actually present without complaining about incompleteness
@@ -241,100 +271,114 @@ ANALYSIS GUIDELINES:
 - Use surrounding context to understand flow and transitions where relevant
 - For templates/placeholders, comment on the structural intent rather than missing content
 
-Analyze each sentence or element. For each provide:
-1. Category: One of [claim, evidence, reasoning, transition, hook, context, cta, unknown]
-2. Issues: List any actual problems from [vague_claim, unsupported, so_what_gap, weak_opening, buried_lead, passive_voice, weasel_words, missing_transition, redundant, too_long]
-   - Each issue must have a severity from [error, warning, info]:
-     - error: Must fix - blocks understanding
-     - warning: Should fix - weakens argument
-     - info: Could improve - polish
-   - Do NOT report placeholder text or template markers as issues
-3. Grade: A-F based on effectiveness of actual content (use "?" for pure placeholders)
-4. Improvements: Specific, actionable suggestions for what IS there. If there is a task included there in meta-text, please act on it.
+Analyze each sentence or element:
+- Category: The structural role (claim, evidence, reasoning, transition, hook, context, cta, unknown)
+- Issues: Actual problems (vague_claim, unsupported, so_what_gap, weak_opening, buried_lead, passive_voice, weasel_words, missing_transition, redundant, too_long)
+  - Severity: error (must fix), warning (should fix), info (could improve)
+  - Do NOT report placeholder text or template markers as issues
+- Grade: A+ to F based on effectiveness (use "?" for pure placeholders)
+- Improvements: Specific, actionable suggestions. If there is a task included in meta-text, act on it.
+- If it's a placeholder, and you have enough information to write it, suggest an option.
 
-For flow_notes, provide constructive analysis of the actual content. For templates/drafts, note structural purpose.
+For flow_notes, provide constructive analysis of actual content. For templates/drafts, note structural purpose.
 
-Respond in this exact JSON format:
-{{
-  "sentences": [
-    {{
-      "text": "exact sentence text",
-      "category": "claim",
-      "issues": [
-        {{"type": "vague_claim", "severity": "warning", "message": "why it's vague", "suggestion": "be specific"}}
-      ],
-      "grade": "B",
-      "improvements": ["suggestion 1", "suggestion 2"]
-    }}
-  ],
-  "overall_grade": "B+",
-  "flow_notes": "Detailed analysis of paragraph flow and structure. Use newlines to separate different points. Include specific suggestions for improvement if applicable."
-}}"""
+You must make a tool call for this analysis using JSON syntax!
+</instruction>"""
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            # max_tokens=4096,
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"}
-        )
+        max_retries = 3
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                # Build messages for this attempt
+                input_list = [{"role": "user", "content": prompt}]
+                
+                # If this is a retry, add context about the previous error
+                if attempt > 0 and last_error:
+                    input_list.append({
+                        "role": "user",
+                        "content": f"Previous attempt failed with validation error: {last_error}\n\nPlease try again with a corrected function call that matches the required schema."
+                    })
+                
+                response = self.client.responses.create(
+                    model=self.model,
+                    input=input_list,
+                    tools=[self.analysis_function],
+                    tool_choice="required",
+                    reasoning={"effort": "medium"},
+                )
 
-        # Parse response
-        try:
-            # Extract JSON from response
-            response_text = response.choices[0].message.content
-            # Find JSON in response (might be wrapped in markdown code block)
-            json_match = re.search(r'\{[\s\S]*\}', response_text)
-            if json_match:
-                data = json.loads(json_match.group())
-            else:
-                raise ValueError("No JSON found in response")
+                # Save function call outputs for subsequent requests
+                input_list += response.output
 
-            sentences = []
-            for s in data.get("sentences", []):
-                issues = []
-                for issue in s.get("issues", []):
-                    issues.append(Issue(
-                        type=IssueType(issue["type"]),
-                        severity=IssueSeverity(
-                            issue.get("severity", "warning")),
-                        message=issue.get("message", ""),
-                        suggestion=issue.get("suggestion")
-                    ))
-                sentences.append(SentenceAnalysis(
-                    text=s["text"],
-                    category=SentenceCategory(s.get("category", "unknown")),
-                    issues=issues,
-                    grade=s.get("grade", "?"),
-                    improvements=s.get("improvements", [])
-                ))
 
-            return ParagraphAnalysis(
-                paragraph_index=idx,
-                paragraph_hash=self._hash_paragraph(para.text),
-                raw_text=para.text,
-                sentences=sentences,
-                overall_grade=data.get("overall_grade", "?"),
-                flow_notes=data.get("flow_notes")
-            )
+                for item in response.output:
+                    if item.type == "function_call":
+                        if item.name == "submic_paragraph_analysis_report":
+                            # Parse using Pydantic - this is where validation happens
+                            ai_analysis = AIParagraphAnalysis.model_validate_json(item.arguments)
 
-        except Exception as e:
-            # Return basic analysis on parse error
-            console.print(
-                f"[yellow]Warning: Could not parse AI response for paragraph {idx + 1}: {e}[/yellow]")
-            return ParagraphAnalysis(
-                paragraph_index=idx,
-                paragraph_hash=self._hash_paragraph(para.text),
-                raw_text=para.text,
-                sentences=[SentenceAnalysis(
-                    text=para.text,
-                    category=SentenceCategory.UNKNOWN,
-                    issues=[],
-                    grade="?",
-                    improvements=[]
-                )],
-                overall_grade="?",
-                flow_notes="Analysis failed"
-            )
+                            # If we got here, validation succeeded!
+                            # Convert AI models to internal models
+                            sentences = []
+                            for ai_sent in ai_analysis.sentences:
+                                issues = [
+                                    Issue(
+                                        type=issue.type,
+                                        severity=issue.severity,
+                                        message=issue.message,
+                                        suggestion=issue.suggestion,
+                                    )
+                                    for issue in ai_sent.issues
+                                ]
+                                sentences.append(
+                                    SentenceAnalysis(
+                                        text=ai_sent.text,
+                                        category=ai_sent.category,
+                                        issues=issues,
+                                        grade=ai_sent.grade,
+                                        improvements=ai_sent.improvements,
+                                    )
+                                )
+
+                            return ParagraphAnalysis(
+                                paragraph_index=idx,
+                                paragraph_hash=self._hash_paragraph(para.text),
+                                raw_text=para.text,
+                                sentences=sentences,
+                                overall_grade=ai_analysis.overall_grade,
+                                flow_notes=ai_analysis.flow_notes,
+                            )
+
+            except Exception as e:
+                last_error = str(e)
+                
+                # If this is the last attempt, give up
+                if attempt == max_retries - 1:
+                    console.print(
+                        f"[yellow]Warning: Could not parse AI response for paragraph {idx + 1} after {max_retries} attempts: {e}[/yellow]"
+                    )
+                    return ParagraphAnalysis(
+                        paragraph_index=idx,
+                        paragraph_hash=self._hash_paragraph(para.text),
+                        raw_text=para.text,
+                        sentences=[
+                            SentenceAnalysis(
+                                text=para.text,
+                                category=SentenceCategory.UNKNOWN,
+                                issues=[],
+                                grade="?",
+                                improvements=[],
+                            )
+                        ],
+                        overall_grade="?",
+                        flow_notes="Analysis failed",
+                    )
+                
+                # Not the last attempt, retry
+                console.print(
+                    f"[yellow]Attempt {attempt + 1}/{max_retries} failed for paragraph {idx + 1}: {e}. Retrying...[/yellow]"
+                )
 
     def _generate_summary(self, analyses: list[ParagraphAnalysis]) -> str:
         """Generate executive summary of all issues."""
@@ -354,18 +398,16 @@ Respond in this exact JSON format:
             issue_counts[key] = issue_counts.get(key, 0) + 1
 
         # Build summary
-        errors = sum(1 for i, _ in all_issues if i.severity ==
-                     IssueSeverity.ERROR)
-        warnings = sum(1 for i, _ in all_issues if i.severity ==
-                       IssueSeverity.WARNING)
+        errors = sum(1 for i, _ in all_issues if i.severity == IssueSeverity.ERROR)
+        warnings = sum(1 for i, _ in all_issues if i.severity == IssueSeverity.WARNING)
 
         summary_parts = [f"Found {errors} errors and {warnings} warnings."]
 
         top_issues = sorted(issue_counts.items(), key=lambda x: -x[1])[:3]
         if top_issues:
-            summary_parts.append("Most common issues: " + ", ".join(
-                f"{t} ({c})" for t, c in top_issues
-            ))
+            summary_parts.append(
+                "Most common issues: " + ", ".join(f"{t} ({c})" for t, c in top_issues)
+            )
 
         return " ".join(summary_parts)
 
@@ -376,11 +418,21 @@ Respond in this exact JSON format:
             return "?"
 
         # Simple average (A=4, B=3, C=2, D=1, F=0)
-        grade_values = {"A": 4, "A+": 4.3, "A-": 3.7,
-                        "B": 3, "B+": 3.3, "B-": 2.7,
-                        "C": 2, "C+": 2.3, "C-": 1.7,
-                        "D": 1, "D+": 1.3, "D-": 0.7,
-                        "F": 0}
+        grade_values = {
+            "A": 4,
+            "A+": 4.3,
+            "A-": 3.7,
+            "B": 3,
+            "B+": 3.3,
+            "B-": 2.7,
+            "C": 2,
+            "C+": 2.3,
+            "C-": 1.7,
+            "D": 1,
+            "D+": 1.3,
+            "D-": 0.7,
+            "F": 0,
+        }
 
         total = sum(grade_values.get(g, 2) for g in grades)
         avg = total / len(grades)

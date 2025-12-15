@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # =============================================================================
@@ -12,39 +12,43 @@ from pydantic import BaseModel
 
 class SentenceCategory(str, Enum):
     """Structural role of a sentence in persuasive writing."""
-    CLAIM = "claim"              # States a position or assertion
-    EVIDENCE = "evidence"        # Supports a claim with data/facts
-    REASONING = "reasoning"      # Connects evidence to claims
-    TRANSITION = "transition"    # Bridges between ideas
-    HOOK = "hook"                # Captures attention
-    CONTEXT = "context"          # Background information
-    CALL_TO_ACTION = "cta"       # Asks reader to do something
+
+    CLAIM = "claim"  # States a position or assertion
+    EVIDENCE = "evidence"  # Supports a claim with data/facts
+    REASONING = "reasoning"  # Connects evidence to claims
+    TRANSITION = "transition"  # Bridges between ideas
+    HOOK = "hook"  # Captures attention
+    CONTEXT = "context"  # Background information
+    CALL_TO_ACTION = "cta"  # Asks reader to do something
     UNKNOWN = "unknown"
 
 
 class IssueSeverity(str, Enum):
     """Severity level for identified issues."""
-    ERROR = "error"      # Must fix - blocks understanding
+
+    ERROR = "error"  # Must fix - blocks understanding
     WARNING = "warning"  # Should fix - weakens argument
-    INFO = "info"        # Could improve - polish
+    INFO = "info"  # Could improve - polish
 
 
 class IssueType(str, Enum):
     """Types of writing issues the analyzer can detect."""
-    VAGUE_CLAIM = "vague_claim"           # Claim without specifics
-    UNSUPPORTED = "unsupported"           # Claim without evidence
-    SO_WHAT_GAP = "so_what_gap"           # Reader left asking "so what?"
-    WEAK_OPENING = "weak_opening"         # Doesn't hook the reader
-    BURIED_LEAD = "buried_lead"           # Key point hidden too deep
-    PASSIVE_VOICE = "passive_voice"       # Could be more direct
-    WEASEL_WORDS = "weasel_words"         # Hedge words that weaken
+
+    VAGUE_CLAIM = "vague_claim"  # Claim without specifics
+    UNSUPPORTED = "unsupported"  # Claim without evidence
+    SO_WHAT_GAP = "so_what_gap"  # Reader left asking "so what?"
+    WEAK_OPENING = "weak_opening"  # Doesn't hook the reader
+    BURIED_LEAD = "buried_lead"  # Key point hidden too deep
+    PASSIVE_VOICE = "passive_voice"  # Could be more direct
+    WEASEL_WORDS = "weasel_words"  # Hedge words that weaken
     MISSING_TRANSITION = "missing_transition"  # Abrupt topic change
-    REDUNDANT = "redundant"               # Repeats without adding value
-    TOO_LONG = "too_long"                 # Sentence too complex
+    REDUNDANT = "redundant"  # Repeats without adding value
+    TOO_LONG = "too_long"  # Sentence too complex
 
 
 class Issue(BaseModel):
     """A specific issue found in the text."""
+
     type: IssueType
     severity: IssueSeverity
     message: str
@@ -53,6 +57,7 @@ class Issue(BaseModel):
 
 class SentenceAnalysis(BaseModel):
     """Analysis results for a single sentence."""
+
     text: str
     category: SentenceCategory
     issues: list[Issue] = []
@@ -62,6 +67,7 @@ class SentenceAnalysis(BaseModel):
 
 class ParagraphAnalysis(BaseModel):
     """Analysis results for a paragraph."""
+
     paragraph_index: int
     paragraph_hash: str
     raw_text: str
@@ -72,6 +78,7 @@ class ParagraphAnalysis(BaseModel):
 
 class DocumentAnalysis(BaseModel):
     """Complete analysis of a document."""
+
     source_path: str
     document_hash: str
     paragraphs: list[ParagraphAnalysis]
@@ -81,6 +88,7 @@ class DocumentAnalysis(BaseModel):
 
 class CacheEntry(BaseModel):
     """Cached analysis for a paragraph."""
+
     paragraph_hash: str
     cache_version: str
     analysis: ParagraphAnalysis
@@ -88,13 +96,63 @@ class CacheEntry(BaseModel):
 
 class AnalysisCache(BaseModel):
     """Full cache structure."""
+
     document_path: str
     entries: dict[str, CacheEntry] = {}  # hash -> CacheEntry
+
+
+# =============================================================================
+# AI RESPONSE MODELS (for function calling)
+# =============================================================================
+
+
+class AIIssue(BaseModel):
+    """Issue structure for AI function call response."""
+
+    type: IssueType
+    severity: IssueSeverity
+    message: str
+    suggestion: Optional[str] = None
+
+
+class AISentenceAnalysis(BaseModel):
+    """Sentence analysis structure for AI function call response."""
+
+    text: str = Field(description="The exact text of the sentence")
+    category: SentenceCategory = Field(
+        description="The structural role of this sentence"
+    )
+    issues: list[AIIssue] = Field(
+        default_factory=list, description="List of issues found in this sentence"
+    )
+    grade: str = Field(description="Grade from A+ to F, or '?' for placeholders")
+    improvements: list[str] = Field(
+        default_factory=list, description="Specific actionable suggestions"
+    )
+
+
+class AIParagraphAnalysis(BaseModel):
+    """Complete paragraph analysis structure for AI function call response."""
+
+    sentences: list[AISentenceAnalysis] = Field(
+        description="Analysis of each sentence in the paragraph"
+    )
+    overall_grade: str = Field(description="Overall grade for the paragraph")
+    flow_notes: Optional[str] = Field(
+        None,
+        description="Detailed analysis of paragraph flow and structure. Use newlines to separate points.",
+    )
+
+
+# =============================================================================
+# DOCUMENT STRUCTURE MODELS
+# =============================================================================
 
 
 @dataclass
 class CalloutBlock:
     """Represents an Obsidian callout block."""
+
     callout_type: str  # note, warning, abstract, etc.
     title: Optional[str]
     content: str
@@ -104,6 +162,7 @@ class CalloutBlock:
 @dataclass
 class Paragraph:
     """A paragraph of prose (not a callout)."""
+
     text: str
     line_number: int
 
@@ -111,6 +170,7 @@ class Paragraph:
 @dataclass
 class Section:
     """A document section with heading."""
+
     level: int
     title: str
     content: list  # Mix of Paragraph and CalloutBlock
@@ -119,8 +179,9 @@ class Section:
 @dataclass
 class ParsedDocument:
     """Fully parsed document structure."""
+
     title: Optional[str]
     frontmatter: Optional[dict]
     sections: list[Section]
     raw_paragraphs: list[Paragraph]  # All prose paragraphs, flattened
-    callouts: list[CalloutBlock]     # All callouts, for reference
+    callouts: list[CalloutBlock]  # All callouts, for reference

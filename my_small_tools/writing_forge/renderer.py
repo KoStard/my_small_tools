@@ -26,20 +26,20 @@ class OutputRenderer:
         html = self.markdown_parser.convert(text)
         # Strip outer <p> tags for inline rendering
         html = html.strip()
-        if html.startswith('<p>') and html.endswith('</p>'):
+        if html.startswith("<p>") and html.endswith("</p>"):
             html = html[3:-4]
         return html
 
     # Color scheme for categories
     CATEGORY_COLORS = {
-        SentenceCategory.CLAIM: "#3498db",       # Blue
-        SentenceCategory.EVIDENCE: "#27ae60",    # Green
-        SentenceCategory.REASONING: "#9b59b6",   # Purple
+        SentenceCategory.CLAIM: "#3498db",  # Blue
+        SentenceCategory.EVIDENCE: "#27ae60",  # Green
+        SentenceCategory.REASONING: "#9b59b6",  # Purple
         SentenceCategory.TRANSITION: "#f39c12",  # Orange
-        SentenceCategory.HOOK: "#e74c3c",        # Red
-        SentenceCategory.CONTEXT: "#95a5a6",     # Gray
+        SentenceCategory.HOOK: "#e74c3c",  # Red
+        SentenceCategory.CONTEXT: "#95a5a6",  # Gray
         SentenceCategory.CALL_TO_ACTION: "#1abc9c",  # Teal
-        SentenceCategory.UNKNOWN: "#bdc3c7",     # Light gray
+        SentenceCategory.UNKNOWN: "#bdc3c7",  # Light gray
     }
 
     SEVERITY_COLORS = {
@@ -49,10 +49,18 @@ class OutputRenderer:
     }
 
     GRADE_COLORS = {
-        "A": "#27ae60", "A+": "#27ae60", "A-": "#27ae60",
-        "B": "#3498db", "B+": "#3498db", "B-": "#3498db",
-        "C": "#f39c12", "C+": "#f39c12", "C-": "#f39c12",
-        "D": "#e67e22", "D+": "#e67e22", "D-": "#e67e22",
+        "A": "#27ae60",
+        "A+": "#27ae60",
+        "A-": "#27ae60",
+        "B": "#3498db",
+        "B+": "#3498db",
+        "B-": "#3498db",
+        "C": "#f39c12",
+        "C+": "#f39c12",
+        "C-": "#f39c12",
+        "D": "#e67e22",
+        "D+": "#e67e22",
+        "D-": "#e67e22",
         "F": "#e74c3c",
         "?": "#95a5a6",
     }
@@ -90,13 +98,12 @@ class OutputRenderer:
                 if sent.issues:
                     tooltip_parts.append("<strong>Issues:</strong>")
                     for issue in sent.issues:
-                        sev_color = self.SEVERITY_COLORS.get(
-                            issue.severity, "#95a5a6")
+                        sev_color = self.SEVERITY_COLORS.get(issue.severity, "#95a5a6")
                         tooltip_parts.append(
                             f'<span style="color: {sev_color}">• {issue.type.value}: {issue.message}</span>'
                         )
                         if issue.suggestion:
-                            tooltip_parts.append(f'  → {issue.suggestion}')
+                            tooltip_parts.append(f"  → {issue.suggestion}")
 
                 if sent.improvements:
                     tooltip_parts.append("<strong>Improvements:</strong>")
@@ -115,31 +122,29 @@ class OutputRenderer:
                 sentences_html.append(f'''
                     <span class="sentence"
                           style="background-color: {color}20; border-left: 3px solid {border_color};"
-                          data-tooltip="{tooltip.replace('"', '&quot;')}">
+                          data-tooltip="{tooltip.replace('"', "&quot;")}">
                         {self._render_markdown_inline(sent.text)}
                         <span class="grade" style="background-color: {grade_color};">{sent.grade}</span>
                     </span>
                 ''')
 
-            para_grade_color = self.GRADE_COLORS.get(
-                para.overall_grade, "#95a5a6")
-            paragraphs_html.append(f'''
+            para_grade_color = self.GRADE_COLORS.get(para.overall_grade, "#95a5a6")
+            paragraphs_html.append(f"""
                 <div class="paragraph">
                     <div class="para-header">
                         <span class="para-num">¶{para.paragraph_index + 1}</span>
                         <span class="para-grade" style="background-color: {para_grade_color};">{para.overall_grade}</span>
                     </div>
                     <div class="para-content">
-                        {' '.join(sentences_html)}
+                        {" ".join(sentences_html)}
                     </div>
-                    {f'<div class="flow-notes">{self._render_markdown_block(para.flow_notes)}</div>' if para.flow_notes else ''}
+                    {f'<div class="flow-notes">{self._render_markdown_block(para.flow_notes)}</div>' if para.flow_notes else ""}
                 </div>
-            ''')
+            """)
 
-        overall_color = self.GRADE_COLORS.get(
-            analysis.overall_grade, "#95a5a6")
+        overall_color = self.GRADE_COLORS.get(analysis.overall_grade, "#95a5a6")
 
-        return f'''<!DOCTYPE html>
+        return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -336,11 +341,11 @@ class OutputRenderer:
 
     <div class="legend">
         <strong style="width: 100%;">Sentence Categories:</strong>
-        {''.join(f'<div class="legend-item"><div class="legend-color" style="background-color: {color};"></div>{cat.value}</div>' for cat, color in self.CATEGORY_COLORS.items())}
+        {"".join(f'<div class="legend-item"><div class="legend-color" style="background-color: {color};"></div>{cat.value}</div>' for cat, color in self.CATEGORY_COLORS.items())}
     </div>
 
     <h2>📄 Document Analysis</h2>
-    {''.join(paragraphs_html)}
+    {"".join(paragraphs_html)}
 
     <div class="tooltip" id="tooltip"></div>
     <div class="modal-overlay" id="modalOverlay"></div>
@@ -442,7 +447,7 @@ class OutputRenderer:
         }});
     </script>
 </body>
-</html>'''
+</html>"""
 
     def _generate_markdown(self, analysis: DocumentAnalysis) -> str:
         """Generate annotated markdown with inline callouts."""
@@ -458,7 +463,8 @@ class OutputRenderer:
 
         for para in analysis.paragraphs:
             lines.append(
-                f"## Paragraph {para.paragraph_index + 1} (Grade: {para.overall_grade})")
+                f"## Paragraph {para.paragraph_index + 1} (Grade: {para.overall_grade})"
+            )
             lines.append("")
 
             for sent in para.sentences:
@@ -478,10 +484,12 @@ class OutputRenderer:
 
                 if sent.issues:
                     for issue in sent.issues:
-                        sev_icon = {"error": "🔴", "warning": "🟡",
-                                    "info": "🔵"}.get(issue.severity.value, "⚪")
+                        sev_icon = {"error": "🔴", "warning": "🟡", "info": "🔵"}.get(
+                            issue.severity.value, "⚪"
+                        )
                         lines.append(
-                            f"  - {sev_icon} **{issue.type.value}**: {issue.message}")
+                            f"  - {sev_icon} **{issue.type.value}**: {issue.message}"
+                        )
                         if issue.suggestion:
                             lines.append(f"    - 💡 {issue.suggestion}")
 
@@ -493,7 +501,7 @@ class OutputRenderer:
                 lines.append("")
 
             if para.flow_notes:
-                lines.append(f"> [!note] Flow Notes")
+                lines.append("> [!note] Flow Notes")
                 lines.append(f"> {para.flow_notes}")
                 lines.append("")
 
@@ -505,11 +513,13 @@ class OutputRenderer:
     def _print_console(self, analysis: DocumentAnalysis):
         """Print analysis to console with rich formatting."""
         # Header
-        self.console.print(Panel(
-            f"[bold]Overall Grade: {analysis.overall_grade}[/bold]\n\n{analysis.executive_summary}",
-            title=f"📝 Writing Analysis: {analysis.source_path}",
-            border_style="blue"
-        ))
+        self.console.print(
+            Panel(
+                f"[bold]Overall Grade: {analysis.overall_grade}[/bold]\n\n{analysis.executive_summary}",
+                title=f"📝 Writing Analysis: {analysis.source_path}",
+                border_style="blue",
+            )
+        )
 
         # Legend
         legend = Table(show_header=False, box=None, padding=(0, 2))
@@ -521,7 +531,7 @@ class OutputRenderer:
         cats = list(SentenceCategory)
         for i in range(0, len(cats), 4):
             row = []
-            for cat in cats[i:i+4]:
+            for cat in cats[i : i + 4]:
                 color = self.CATEGORY_COLORS.get(cat, "#888")
                 row.append(f"[{color}]■[/] {cat.value}")
             while len(row) < 4:
@@ -548,19 +558,23 @@ class OutputRenderer:
                     issue_marks = " [yellow]⚠[/]"
 
                 para_content.append(
-                    f"[{cat_color}]{sent.text}[/] [{sent_grade_color}][{sent.grade}][/]{issue_marks}")
+                    f"[{cat_color}]{sent.text}[/] [{sent_grade_color}][{sent.grade}][/]{issue_marks}"
+                )
 
             self.console.print(
                 Panel(
                     " ".join(para_content),
                     title=f"¶{para.paragraph_index + 1} [{grade_color}]{para.overall_grade}[/]",
-                    border_style="dim"
+                    border_style="dim",
                 )
             )
 
             # Show issues for this paragraph
-            all_issues = [(sent.text[:50], issue)
-                          for sent in para.sentences for issue in sent.issues]
+            all_issues = [
+                (sent.text[:50], issue)
+                for sent in para.sentences
+                for issue in sent.issues
+            ]
             if all_issues:
                 issue_table = Table(show_header=True, header_style="bold")
                 issue_table.add_column("Severity", width=8)
@@ -571,12 +585,12 @@ class OutputRenderer:
                     sev_style = {
                         IssueSeverity.ERROR: "red",
                         IssueSeverity.WARNING: "yellow",
-                        IssueSeverity.INFO: "blue"
+                        IssueSeverity.INFO: "blue",
                     }.get(issue.severity, "white")
                     issue_table.add_row(
                         f"[{sev_style}]{issue.severity.value}[/",
                         issue.type.value,
-                        issue.message
+                        issue.message,
                     )
 
                 self.console.print(issue_table)
