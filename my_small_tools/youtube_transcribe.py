@@ -90,6 +90,8 @@ def format_transcript(transcript: List[dict]) -> str:
 
     for i, segment in enumerate(transcript):
         text = get_text(segment).strip()
+        # Remove line breaks within segments
+        text = text.replace('\n', ' ').replace('\r', '')
         # Fix HTML entities if any (basic ones)
         text = text.replace('&quot;', '"').replace('&#39;', "'")
         
@@ -192,7 +194,9 @@ def main(urls: tuple, output_dir: Optional[Path]):
                      # One last try: just get the first one if it's the only one?
                      # No, let's list available languages
                      avail = [t.language_code for t in transcript_list_obj]
-                     raise Exception(f"No English transcript found. Available: {avail}")
+                     print(f"No English transcript found. Available: {avail}")
+                     transcript = list(transcript_list_obj)[0]
+                     print("---")
 
                 transcript_data = transcript.fetch()
                 
@@ -223,7 +227,7 @@ def main(urls: tuple, output_dir: Optional[Path]):
             filename.write_text(final_content, encoding='utf-8')
             console.print(f"[green]✓ Saved transcript to:[/green] {filename}")
         else:
-            console.print(Panel(final_content, title=f"Transcript: {title}", border_style="blue"))
+            print(final_content)
 
 if __name__ == '__main__':
     main()
