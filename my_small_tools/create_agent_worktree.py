@@ -31,9 +31,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     description = "Create a dedicated git worktree and branch for an agent."
     epilog = (
         "Examples:\n"
-        "  create_agent_worktree.py agent1-login-system\n"
-        "  create_agent_worktree.py agent2-refactor --base develop\n"
-        "  create_agent_worktree.py agent3-api --branch feature/agent3-api --path ../repo-agent3\n"
+        "  create_agent_worktree agent1-login-system\n"
+        "  create_agent_worktree agent2-refactor --base develop\n"
+        "  create_agent_worktree agent3-api --branch feature/agent3-api --path ../repo-agent3\n"
     )
     parser = argparse.ArgumentParser(
         description=description,
