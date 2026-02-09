@@ -10,6 +10,21 @@ import sys
 from pathlib import Path
 
 
+class Colors:
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    GREEN = "\033[32m"
+    CYAN = "\033[36m"
+    YELLOW = "\033[33m"
+
+
+def color(text: str, *styles: str) -> str:
+    if not sys.stdout.isatty():
+        return text
+    return "".join(styles) + text + Colors.RESET
+
+
 def run(cmd: list[str]) -> tuple[int, str, str]:
     result = subprocess.run(cmd, capture_output=True, text=True)
     return result.returncode, result.stdout, result.stderr
@@ -108,15 +123,15 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Error creating worktree:\n{stderr.strip()}", file=sys.stderr)
         sys.exit(1)
 
-    print("Worktree created.")
-    print(f"Path:   {worktree_path}")
-    print(f"Branch: {branch_name}")
-    print(f"Base:   {base_branch}")
+    print(color("Worktree created.", Colors.GREEN, Colors.BOLD))
+    print(f"{color('Path:', Colors.DIM):6} {worktree_path}")
+    print(f"{color('Branch:', Colors.DIM):6} {branch_name}")
+    print(f"{color('Base:', Colors.DIM):6} {base_branch}")
     print("")
-    print("Agent should work in:")
-    print(f"  cd {worktree_path}")
+    print(color("Agent should work in:", Colors.CYAN, Colors.BOLD))
+    print(f"  {color(f'cd {worktree_path}', Colors.YELLOW, Colors.BOLD)}")
     print("")
-    print("To merge later:")
+    print(color("To merge later:", Colors.CYAN, Colors.BOLD))
     print(f"  cd {repo_root}")
     print(f"  git merge {branch_name}")
 
