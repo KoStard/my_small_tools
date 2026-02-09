@@ -47,8 +47,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "-b",
         "--base",
-        default="main",
-        help="Base branch to create the agent branch from (default: main).",
+        help="Base branch to create the agent branch from (default: current branch).",
     )
     parser.add_argument(
         "--branch",
@@ -65,7 +64,13 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(sys.argv[1:] if argv is None else argv)
 
     agent_name = args.agent_name
-    base_branch = args.base
+    if args.base:
+        base_branch = args.base
+    else:
+        base_branch = run_or_exit(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            "Error: unable to determine current branch.",
+        )
     branch_name = args.branch or f"feature/{agent_name}"
 
     # Get repo root
