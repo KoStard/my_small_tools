@@ -9,6 +9,9 @@ A simple tool to automatically sync multiple git-based (knowledge base) reposito
 - Push changes to remote
 - Configurable repository paths
 - Merge conflict detection
+- Continues syncing remaining repositories when one fails
+- End-of-run report with failed repository paths and reasons
+- Opens an interactive shell in the failed repository when exactly one fails
 
 ### Installation
 
@@ -40,7 +43,7 @@ Run the sync tool:
 uv run sync_knowledge_base.py
 ```
 
-If merge conflicts occur:
-1. The tool will stop and notify you
-2. Manually resolve conflicts in the affected repository
-3. Run the tool again
+If failures occur:
+1. The tool will continue syncing other repositories
+2. At the end, it prints a report of failed repositories with reasons
+3. If exactly one repository failed and you ran it interactively, it opens a shell in that repository for quick fixes

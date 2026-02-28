@@ -1,8 +1,11 @@
 # The purpose of this script is to sync my LogSeq and Obsidian note repos
 
-import subprocess
 import configparser
+import os
+import shlex
+import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from appdirs import user_config_dir
 
@@ -34,6 +37,11 @@ def get_config_path() -> Path:
 
 # --- Sync Logic ---
 
+@dataclass
+class RepoFailure:
+    repo_path: str
+    reason: str
+
 def get_repos_from_config():
     """Read repository paths from config file, creating it if missing"""
     config_path = get_config_path()
@@ -53,51 +61,119 @@ def get_repos_from_config():
     config.read(config_path)
     return [repo.strip() for repo in config['DEFAULT']['repos'].split('\n') if repo.strip()]
 
+def _format_command_error(command, result):
+    details = (result.stderr or result.stdout or "").strip()
+    if not details:
+        details = f"exit code {result.returncode}"
+    return f"{command} failed: {details}"
+
 def git_commit(repo_path):
-    """Commit all changes in the repository"""
-    try:
-        subprocess.run(['git', 'add', '.'], cwd=repo_path, check=True)
-        subprocess.run(['git', 'commit', '-m', 'Auto-sync commit'], cwd=repo_path, check=True)
-        return True
-    except subprocess.CalledProcessError:
+    """Commit all changes in the repository."""
+    add_result = subprocess.run(
+        ['git', 'add', '.'],
+        cwd=repo_path,
+        text=True,
+        capture_output=True
+    )
+    if add_result.returncode != 0:
+        return False, _format_command_error("git add .", add_result)
+
+    commit_result = subprocess.run(
+        ['git', 'commit', '-m', 'Auto-sync commit'],
+        cwd=repo_path,
+        text=True,
+        capture_output=True
+    )
+    if commit_result.returncode == 0:
+        return True, None
+
+    commit_output = f"{commit_result.stdout}\n{commit_result.stderr}".lower()
+    no_changes_markers = [
+        "nothing to commit",
+        "working tree clean",
+        "nothing added to commit",
+    ]
+    if any(marker in commit_output for marker in no_changes_markers):
         print(f"No changes to commit in {repo_path}")
-        return False
+        return True, None
+
+    return False, _format_command_error("git commit -m 'Auto-sync commit'", commit_result)
 
 def git_sync(repo_path):
-    """Sync repository with remote"""
-    try:
-        # Pull with rebase
-        subprocess.run(['git', 'pull', '--rebase'], cwd=repo_path, check=True)
-        
-        # Push changes
-        subprocess.run(['git', 'push'], cwd=repo_path, check=True)
-        print(f"Successfully synced {repo_path}")
-        
-    except subprocess.CalledProcessError as e:
-        print(f"\n⚠️  Merge conflict detected in {repo_path}!")
-        print("Please resolve the conflicts manually and run the script again.")
-        print(f"Conflict details: {str(e)}")
-        return False
-    return True
+    """Sync repository with remote."""
+    pull_result = subprocess.run(
+        ['git', 'pull', '--rebase'],
+        cwd=repo_path,
+        text=True,
+        capture_output=True
+    )
+    if pull_result.returncode != 0:
+        return False, _format_command_error("git pull --rebase", pull_result)
+
+    push_result = subprocess.run(
+        ['git', 'push'],
+        cwd=repo_path,
+        text=True,
+        capture_output=True
+    )
+    if push_result.returncode != 0:
+        return False, _format_command_error("git push", push_result)
+
+    print(f"Successfully synced {repo_path}")
+    return True, None
+
+def _sanitize_reason(reason):
+    """Normalize multi-line git output into one concise line."""
+    return " ".join(reason.split())
+
+def _drop_into_failed_repo(repo_path):
+    """Open an interactive shell in the failed repo when possible."""
+    failed_repo_path = Path(repo_path)
+    if not failed_repo_path.is_dir():
+        print(f"\nSingle failed repository path is not a directory: {repo_path}")
+        return
+
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        print("\nSingle failed repository detected.")
+        print(f"Fix it with: cd {shlex.quote(str(failed_repo_path))}")
+        return
+
+    shell = os.environ.get("SHELL", "/bin/zsh")
+    print(f"\nSingle failed repository: {failed_repo_path}")
+    print("Opening an interactive shell there for fixes. Exit the shell when finished.")
+    subprocess.run([shell], cwd=str(failed_repo_path), check=False)
 
 def sync_repositories(repos):
-    """Sync all repositories in the list"""
+    """Sync all repositories and return per-repo failures."""
+    failures = []
     for repo_path in repos:
-        path = Path(repo_path)
+        path = Path(repo_path).expanduser()
         if not path.exists():
             print(f"Repository path does not exist: {repo_path}")
+            failures.append(RepoFailure(str(path), "Repository path does not exist"))
             continue
             
-        print(f"\nSyncing repository: {repo_path}")
+        print(f"\nSyncing repository: {path}")
         
         # Commit changes if any
-        git_commit(repo_path)
+        commit_ok, commit_error = git_commit(str(path))
+        if not commit_ok:
+            failures.append(RepoFailure(str(path), _sanitize_reason(commit_error)))
+            continue
         
         # Sync with remote
-        if not git_sync(repo_path):
-            return False
+        sync_ok, sync_error = git_sync(str(path))
+        if not sync_ok:
+            failures.append(RepoFailure(str(path), _sanitize_reason(sync_error)))
             
-    return True
+    return failures
+
+def print_failure_report(failures):
+    """Print a concise end-of-run report for failed repositories."""
+    print(f"\n❌ Sync completed with {len(failures)} failed repos:")
+    for failure in failures:
+        print(f"  - {failure.repo_path}")
+        print(f"    reason: {failure.reason}")
 
 def main():
     repos = get_repos_from_config()
@@ -112,10 +188,13 @@ def main():
         print("    /path/to/second/repo")
         exit(1)
         
-    if sync_repositories(repos):
+    failures = sync_repositories(repos)
+    if not failures:
         print("\n✅ All repositories synced successfully!")
     else:
-        print("\n❌ Sync incomplete - please resolve conflicts and run again.")
+        print_failure_report(failures)
+        if len(failures) == 1:
+            _drop_into_failed_repo(failures[0].repo_path)
 
 if __name__ == "__main__":
     main()
