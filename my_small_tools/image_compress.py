@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import io
+import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,6 +15,16 @@ QUALITY_LEVELS = {
     "medium": {"quality": 80, "max_width": 1920, "max_height": 1920},
     "small": {"quality": 70, "max_width": 1280, "max_height": 1280},
 }
+HEIF_EXTENSIONS = {".heic", ".heif"}
+
+_HEIF_PLUGIN_AVAILABLE = False
+try:
+    from pillow_heif import register_heif_opener  # type: ignore
+
+    register_heif_opener()
+    _HEIF_PLUGIN_AVAILABLE = True
+except Exception:
+    _HEIF_PLUGIN_AVAILABLE = False
 
 
 @dataclass
@@ -63,6 +76,59 @@ def _convert_to_rgb(image: Image.Image) -> Image.Image:
         return composed.convert("RGB")
 
     return image.convert("RGB")
+
+
+def _convert_heif_with_sips(input_image: Path) -> Path | None:
+    if shutil.which("sips") is None:
+        return None
+
+    with tempfile.NamedTemporaryFile(
+        prefix="image-compress-heif-",
+        suffix=".jpg",
+        delete=False,
+    ) as tmp_file:
+        temp_output = Path(tmp_file.name)
+
+    result = subprocess.run(
+        ["sips", "-s", "format", "jpeg", str(input_image), "--out", str(temp_output)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        temp_output.unlink(missing_ok=True)
+        return None
+    return temp_output
+
+
+def _open_input_image(input_image: Path) -> Image.Image:
+    try:
+        with Image.open(input_image) as raw_image:
+            return _convert_to_rgb(raw_image)
+    except Exception as primary_error:
+        if input_image.suffix.lower() in HEIF_EXTENSIONS:
+            temp_converted = _convert_heif_with_sips(input_image)
+            if temp_converted is not None:
+                try:
+                    with Image.open(temp_converted) as converted_image:
+                        return _convert_to_rgb(converted_image)
+                except Exception:
+                    pass
+                finally:
+                    temp_converted.unlink(missing_ok=True)
+
+            hint = ""
+            if not _HEIF_PLUGIN_AVAILABLE:
+                hint = (
+                    " HEIC/HEIF support is unavailable in Pillow."
+                    " Install `pillow-heif` (or use macOS `sips`)."
+                )
+            raise click.ClickException(
+                f"Failed to open image {input_image}: {primary_error}.{hint}"
+            ) from primary_error
+        raise click.ClickException(
+            f"Failed to open image {input_image}: {primary_error}"
+        ) from primary_error
 
 
 def _resize_to_bounds(
@@ -177,11 +243,7 @@ def _compress_single_image(
     if not output_image.parent.exists():
         raise click.ClickException(f"Output directory does not exist: {output_image.parent}")
 
-    try:
-        with Image.open(input_image) as raw_image:
-            converted = _convert_to_rgb(raw_image)
-    except Exception as exc:
-        raise click.ClickException(f"Failed to open image {input_image}: {exc}") from exc
+    converted = _open_input_image(input_image)
 
     input_dimensions = converted.size
     resized = _resize_to_bounds(converted, max_width=max_width, max_height=max_height)
