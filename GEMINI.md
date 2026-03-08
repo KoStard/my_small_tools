@@ -9,7 +9,7 @@ The project is structured as a Python package (`my_small_tools`) containing seve
 ### Key Tools
 
 *   **Writing Forge** (`writing-forge`): A sophisticated tool to analyze and improve prose, treating it like code. It features structural analysis, improvement suggestions via OpenAI models, and caching.
-*   **Knowledge Base Sync** (`sync-knowledge-base`): A tool to automatically sync multiple git-based repositories (pull, commit, push) with conflict detection.
+*   **Knowledge Base Sync** (`sync-knowledge-base`): A tool to automatically sync multiple git-based repositories (pull, commit, push) with Markdown-aware conflict auto-resolution.
 *   **Hermes Research** (`hermes-research`): Research manager tool.
 *   **Utilities:**
     *   `ls-time`: Directory listing with time focus.
