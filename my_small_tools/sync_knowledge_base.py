@@ -9,7 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import click
 from appdirs import user_config_dir
+from rich.console import Console
+
+console = Console()
 
 MARKDOWN_EXTENSIONS = {".md", ".markdown"}
 NO_CHANGES_MARKERS = [
@@ -37,7 +41,7 @@ def _get_config_root_dir() -> Path:
         return Path(user_config_dir(appname=app_name, appauthor=False))
     else:
         # Fallback for other potential OS - default to Unix-like style
-        print(f"Warning: Unsupported platform '{sys.platform}'. Defaulting config path to ~/.config/{app_name}/")
+        console.print(f"[yellow]Warning: Unsupported platform '{sys.platform}'. Defaulting config path to ~/.config/{app_name}/[/yellow]")
         return Path.home() / ".config" / app_name
 
 def get_config_path() -> Path:
@@ -56,9 +60,9 @@ class ConflictResolution:
     resolved_files: list[str]
     remaining_conflicts: list[str]
 
-def get_repos_from_config():
+def get_repos_from_config(custom_config_path: Path = None):
     """Read repository paths from config file, creating it if missing"""
-    config_path = get_config_path()
+    config_path = custom_config_path or get_config_path()
     
     # Create config file with default paths if it doesn't exist
     if not config_path.exists():
@@ -167,7 +171,7 @@ def _resolve_markdown_conflict(repo_path, file_path):
     if add_result.returncode != 0:
         return False, _format_command_error(f"git add -- {file_path}", add_result)
 
-    print(f"Auto-resolved Markdown conflict: {file_path}")
+    console.print(f"  [cyan]Auto-resolved Markdown conflict:[/cyan] {file_path}")
     return True, None
 
 def _auto_resolve_markdown_conflicts(repo_path):
@@ -241,7 +245,7 @@ def git_commit(repo_path):
         return True, None
 
     if _has_no_changes_message(commit_result):
-        print(f"No changes to commit in {repo_path}")
+        console.print(f"  [dim]No changes to commit in {repo_path}[/dim]")
         return True, None
 
     return False, _format_command_error("git commit -m 'Auto-sync commit'", commit_result)
@@ -256,21 +260,20 @@ def git_sync(repo_path):
         rebase_ok, rebase_result, rebase_error = _continue_rebase_after_markdown_resolution(repo_path)
         if not rebase_ok:
             if rebase_result:
-                print("Markdown conflict auto-resolution completed for:")
+                console.print("  [blue]Markdown conflict auto-resolution completed for:[/blue]")
                 for file_path in rebase_result:
-                    print(f"  - {file_path}")
+                    console.print(f"    - {file_path}")
             return False, rebase_error or _format_command_error("git pull --rebase", pull_result)
 
         if rebase_result:
-            print("Markdown conflict auto-resolution completed for:")
+            console.print("  [blue]Markdown conflict auto-resolution completed for:[/blue]")
             for file_path in rebase_result:
-                print(f"  - {file_path}")
+                console.print(f"    - {file_path}")
 
     push_result = _run_git(repo_path, 'push')
     if push_result.returncode != 0:
         return False, _format_command_error("git push", push_result)
 
-    print(f"Successfully synced {repo_path}")
     return True, None
 
 def _sanitize_reason(reason):
@@ -281,67 +284,75 @@ def _drop_into_failed_repo(repo_path):
     """Open an interactive shell in the failed repo when possible."""
     failed_repo_path = Path(repo_path)
     if not failed_repo_path.is_dir():
-        print(f"\nSingle failed repository path is not a directory: {repo_path}")
+        console.print(f"\n[red]Single failed repository path is not a directory:[/red] {repo_path}")
         return
 
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        print("\nSingle failed repository detected.")
-        print(f"Fix it with: cd {shlex.quote(str(failed_repo_path))}")
+        console.print(f"\n[yellow]Single failed repository detected:[/yellow] {repo_path}")
+        console.print(f"Fix it with: [bold cyan]cd {shlex.quote(str(failed_repo_path))}[/bold cyan]")
         return
 
     shell = os.environ.get("SHELL", "/bin/zsh")
-    print(f"\nSingle failed repository: {failed_repo_path}")
-    print("Opening an interactive shell there for fixes. Exit the shell when finished.")
+    console.print(f"\n[yellow]Single failed repository:[/yellow] {failed_repo_path}")
+    console.print("[dim]Opening an interactive shell there for fixes. Exit the shell when finished.[/dim]")
     subprocess.run([shell], cwd=str(failed_repo_path), check=False)
 
 def sync_repositories(repos):
     """Sync all repositories and return per-repo failures."""
     failures = []
-    for repo_path in repos:
-        path = Path(repo_path).expanduser()
-        if not path.exists():
-            print(f"Repository path does not exist: {repo_path}")
-            failures.append(RepoFailure(str(path), "Repository path does not exist"))
-            continue
+    
+    with console.status("[bold green]Starting sync process...", spinner="dots"):
+        for repo_path in repos:
+            path = Path(repo_path).expanduser()
+            if not path.exists():
+                console.print(f"[bold red]❌ Repository path does not exist:[/bold red] {repo_path}")
+                failures.append(RepoFailure(str(path), "Repository path does not exist"))
+                continue
+                
+            console.print(f"[bold cyan]Syncing repository:[/bold cyan] {path}")
             
-        print(f"\nSyncing repository: {path}")
-        
-        # Commit changes if any
-        commit_ok, commit_error = git_commit(str(path))
-        if not commit_ok:
-            failures.append(RepoFailure(str(path), _sanitize_reason(commit_error)))
-            continue
-        
-        # Sync with remote
-        sync_ok, sync_error = git_sync(str(path))
-        if not sync_ok:
-            failures.append(RepoFailure(str(path), _sanitize_reason(sync_error)))
+            # Commit changes if any
+            commit_ok, commit_error = git_commit(str(path))
+            if not commit_ok:
+                console.print(f"  [bold red]❌ Commit failed:[/bold red] {_sanitize_reason(commit_error)}")
+                failures.append(RepoFailure(str(path), _sanitize_reason(commit_error)))
+                continue
             
+            # Sync with remote
+            sync_ok, sync_error = git_sync(str(path))
+            if not sync_ok:
+                console.print(f"  [bold red]❌ Sync failed:[/bold red] {_sanitize_reason(sync_error)}")
+                failures.append(RepoFailure(str(path), _sanitize_reason(sync_error)))
+            else:
+                console.print(f"  [bold green]✅ Synced successfully[/bold green]")
+                
     return failures
 
 def print_failure_report(failures):
     """Print a concise end-of-run report for failed repositories."""
-    print(f"\n❌ Sync completed with {len(failures)} failed repos:")
+    console.print(f"\n[bold red]❌ Sync completed with {len(failures)} failed repos:[/bold red]")
     for failure in failures:
-        print(f"  - {failure.repo_path}")
-        print(f"    reason: {failure.reason}")
+        console.print(f"  - [bold]{failure.repo_path}[/bold]")
+        console.print(f"    [dim]reason: {failure.reason}[/dim]")
 
-def main():
-    repos = get_repos_from_config()
+@click.command(help="Synchronize multiple git-based knowledge bases (Obsidian, LogSeq, etc.).\n\nAutomatically commits changes, pulls with rebase, resolves markdown conflicts, and pushes for each configured repository.")
+@click.option('--config-file', type=click.Path(exists=False, dir_okay=False, path_type=Path), help='Path to an alternative config file.')
+def main(config_file):
+    """Main CLI entry point."""
+    console.rule("[bold blue]Knowledge Base Sync[/bold blue]")
+
+    repos = get_repos_from_config(config_file)
     if not repos:
-        config_path = get_config_path()
-        print("No repositories configured. Please add repository paths to the config file:")
-        print(f"{config_path}")
-        print("Add paths under the [DEFAULT] section like this:")
-        print("[DEFAULT]")
-        print("repos = ")
-        print("    /path/to/first/repo")
-        print("    /path/to/second/repo")
-        exit(1)
+        path_to_print = config_file or get_config_path()
+        console.print("[yellow]No repositories configured.[/yellow]")
+        console.print(f"Please add repository paths to the config file: [bold]{path_to_print}[/bold]\n")
+        console.print("Add paths under the [cyan][DEFAULT][/cyan] section like this:\n")
+        console.print("[dim][DEFAULT]\nrepos = \n    /path/to/first/repo\n    /path/to/second/repo[/dim]")
+        sys.exit(1)
         
     failures = sync_repositories(repos)
     if not failures:
-        print("\n✅ All repositories synced successfully!")
+        console.print("\n[bold green]✅ All repositories synced successfully![/bold green]")
     else:
         print_failure_report(failures)
         if len(failures) == 1:
