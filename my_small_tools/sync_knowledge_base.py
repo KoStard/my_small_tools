@@ -77,7 +77,8 @@ def get_repos_from_config(custom_config_path: Path = None):
     # Read config
     config = configparser.ConfigParser()
     config.read(config_path, encoding='utf-8')
-    return [repo.strip() for repo in config['DEFAULT']['repos'].split('\n') if repo.strip()]
+    repos_str = config.get('DEFAULT', 'repos', fallback='')
+    return [repo.strip() for repo in repos_str.split('\n') if repo.strip()]
 
 def write_repos_to_config(repos, custom_config_path: Path = None):
     """Write repository paths to config file."""
