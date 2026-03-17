@@ -63,7 +63,7 @@ class ConflictResolution:
 def get_repos_from_config(custom_config_path: Path = None):
     """Read repository paths from config file, creating it if missing"""
     config_path = custom_config_path or get_config_path()
-    
+
     # Create config file with default paths if it doesn't exist
     if not config_path.exists():
         config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -73,11 +73,20 @@ def get_repos_from_config(custom_config_path: Path = None):
         }
         with config_path.open('w') as f:
             config.write(f)
-    
+
     # Read config
     config = configparser.ConfigParser()
     config.read(config_path)
     return [repo.strip() for repo in config['DEFAULT']['repos'].split('\n') if repo.strip()]
+
+def write_repos_to_config(repos, custom_config_path: Path = None):
+    """Write repository paths to config file."""
+    config_path = custom_config_path or get_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config = configparser.ConfigParser()
+    config['DEFAULT'] = {'repos': '\n' + '\n'.join(f'    {r}' for r in repos)}
+    with config_path.open('w') as f:
+        config.write(f)
 
 def _format_command_error(command, result):
     details = (result.stderr or result.stdout or "").strip()
@@ -292,7 +301,10 @@ def _drop_into_failed_repo(repo_path):
         console.print(f"Fix it with: [bold cyan]cd {shlex.quote(str(failed_repo_path))}[/bold cyan]")
         return
 
-    shell = os.environ.get("SHELL", "/bin/zsh")
+    if sys.platform == "win32":
+        shell = os.environ.get("COMSPEC", "cmd.exe")
+    else:
+        shell = os.environ.get("SHELL", "/bin/sh")
     console.print(f"\n[yellow]Single failed repository:[/yellow] {failed_repo_path}")
     console.print("[dim]Opening an interactive shell there for fixes. Exit the shell when finished.[/dim]")
     subprocess.run([shell], cwd=str(failed_repo_path), check=False)
@@ -335,21 +347,24 @@ def print_failure_report(failures):
         console.print(f"  - [bold]{failure.repo_path}[/bold]")
         console.print(f"    [dim]reason: {failure.reason}[/dim]")
 
-@click.command(help="Synchronize multiple git-based knowledge bases (Obsidian, LogSeq, etc.).\n\nAutomatically commits changes, pulls with rebase, resolves markdown conflicts, and pushes for each configured repository.")
+@click.group(invoke_without_command=True, help="Synchronize multiple git-based knowledge bases (Obsidian, LogSeq, etc.).\n\nRun without a subcommand to sync all configured repositories.")
 @click.option('--config-file', type=click.Path(exists=False, dir_okay=False, path_type=Path), help='Path to an alternative config file.')
-def main(config_file):
-    """Main CLI entry point."""
-    console.rule("[bold blue]Knowledge Base Sync[/bold blue]")
+@click.pass_context
+def main(ctx, config_file):
+    ctx.ensure_object(dict)
+    ctx.obj['config_file'] = config_file
+    if ctx.invoked_subcommand is not None:
+        return
 
+    console.rule("[bold blue]Knowledge Base Sync[/bold blue]")
     repos = get_repos_from_config(config_file)
     if not repos:
         path_to_print = config_file or get_config_path()
         console.print("[yellow]No repositories configured.[/yellow]")
-        console.print(f"Please add repository paths to the config file: [bold]{path_to_print}[/bold]\n")
-        console.print("Add paths under the [cyan][DEFAULT][/cyan] section like this:\n")
-        console.print("[dim][DEFAULT]\nrepos = \n    /path/to/first/repo\n    /path/to/second/repo[/dim]")
+        console.print(f"Add one with: [bold cyan]sync-kb add <path>[/bold cyan]")
+        console.print(f"Config file: [bold]{path_to_print}[/bold]")
         sys.exit(1)
-        
+
     failures = sync_repositories(repos)
     if not failures:
         console.print("\n[bold green]✅ All repositories synced successfully![/bold green]")
@@ -357,6 +372,51 @@ def main(config_file):
         print_failure_report(failures)
         if len(failures) == 1:
             _drop_into_failed_repo(failures[0].repo_path)
+
+
+@main.command(name="add", help="Add a directory to the sync list.")
+@click.argument('path', type=click.Path(file_okay=False, path_type=Path))
+@click.pass_context
+def add_repo(ctx, path):
+    config_file = ctx.obj['config_file']
+    resolved = str(path.resolve())
+    repos = get_repos_from_config(config_file)
+    if resolved in repos:
+        console.print(f"[yellow]Already in sync list:[/yellow] {resolved}")
+        return
+    repos.append(resolved)
+    write_repos_to_config(repos, config_file)
+    console.print(f"[bold green]Added:[/bold green] {resolved}")
+
+
+@main.command(name="remove", help="Remove a directory from the sync list.")
+@click.argument('path', type=click.Path(file_okay=False, path_type=Path))
+@click.pass_context
+def remove_repo(ctx, path):
+    config_file = ctx.obj['config_file']
+    resolved = str(path.resolve())
+    repos = get_repos_from_config(config_file)
+    if resolved not in repos:
+        console.print(f"[yellow]Not in sync list:[/yellow] {resolved}")
+        sys.exit(1)
+    repos.remove(resolved)
+    write_repos_to_config(repos, config_file)
+    console.print(f"[bold green]Removed:[/bold green] {resolved}")
+
+
+@main.command(name="list", help="List all configured sync directories.")
+@click.pass_context
+def list_repos(ctx):
+    config_file = ctx.obj['config_file']
+    repos = get_repos_from_config(config_file)
+    config_path = config_file or get_config_path()
+    console.print(f"[dim]Config: {config_path}[/dim]")
+    if not repos:
+        console.print("[yellow]No repositories configured.[/yellow]")
+        return
+    for repo in repos:
+        console.print(f"  {repo}")
+
 
 if __name__ == "__main__":
     main()
