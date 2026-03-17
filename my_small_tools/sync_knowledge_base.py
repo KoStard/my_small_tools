@@ -480,7 +480,17 @@ def obsidian_gitignore(vault_path):
 
     # Update or create .gitignore
     gitignore_path = vault / ".gitignore"
-    existing = gitignore_path.read_text(encoding='utf-8') if gitignore_path.exists() else ""
+    if gitignore_path.exists():
+        for enc in ('utf-8-sig', 'utf-16', 'latin-1'):
+            try:
+                existing = gitignore_path.read_text(encoding=enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            existing = ""
+    else:
+        existing = ""
     if _GITIGNORE_BLOCK_START in existing:
         new_content = re.sub(
             rf"{re.escape(_GITIGNORE_BLOCK_START)}.*?{re.escape(_GITIGNORE_BLOCK_END)}",
