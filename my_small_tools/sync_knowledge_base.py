@@ -2,6 +2,7 @@
 
 import configparser
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -16,6 +17,17 @@ from rich.console import Console
 console = Console()
 
 MARKDOWN_EXTENSIONS = {".md", ".markdown"}
+
+# Files inside .obsidian/ that are local state and should be gitignored
+OBSIDIAN_GITIGNORE_PATTERNS = [
+    ".obsidian/workspace.json",
+    ".obsidian/workspace-mobile.json",
+    ".obsidian/plugins/obsidian-git/data.json",
+    ".trash/",
+]
+_GITIGNORE_BLOCK_START = "# BEGIN sync-kb-obsidian"
+_GITIGNORE_BLOCK_END = "# END sync-kb-obsidian"
+
 NO_CHANGES_MARKERS = [
     "nothing to commit",
     "working tree clean",
@@ -184,16 +196,41 @@ def _resolve_markdown_conflict(repo_path, file_path):
     console.print(f"  [cyan]Auto-resolved Markdown conflict:[/cyan] {file_path}")
     return True, None
 
-def _auto_resolve_markdown_conflicts(repo_path):
+def _is_obsidian_internal(file_path):
+    parts = Path(file_path).parts
+    return len(parts) > 0 and parts[0] == '.obsidian'
+
+def _resolve_with_remote(repo_path, file_path):
+    """Resolve a conflict by taking the remote version (stage 2 = ours in rebase)."""
+    content = _get_stage_blob(repo_path, 2, file_path)
+    worktree_path = Path(repo_path) / file_path
+    if content is None:
+        if worktree_path.exists():
+            worktree_path.unlink()
+    else:
+        worktree_path.parent.mkdir(parents=True, exist_ok=True)
+        worktree_path.write_bytes(content)
+
+    add_result = _git_add_path(repo_path, file_path)
+    if add_result.returncode != 0:
+        return False, _format_command_error(f"git add -- {file_path}", add_result)
+
+    console.print(f"  [cyan]Auto-resolved conflict (keeping remote):[/cyan] {file_path}")
+    return True, None
+
+def _auto_resolve_conflicts(repo_path):
     unmerged_files = _get_unmerged_files(repo_path)
     if not unmerged_files:
         return ConflictResolution([], []), None
 
     resolved_files = []
     for file_path in unmerged_files:
-        if not _is_markdown_path(file_path):
+        if _is_markdown_path(file_path):
+            resolve_ok, resolve_error = _resolve_markdown_conflict(repo_path, file_path)
+        elif _is_obsidian_internal(file_path):
+            resolve_ok, resolve_error = _resolve_with_remote(repo_path, file_path)
+        else:
             continue
-        resolve_ok, resolve_error = _resolve_markdown_conflict(repo_path, file_path)
         if not resolve_ok:
             return None, resolve_error
         resolved_files.append(file_path)
@@ -201,24 +238,24 @@ def _auto_resolve_markdown_conflicts(repo_path):
     remaining_conflicts = _get_unmerged_files(repo_path)
     return ConflictResolution(_dedupe_paths(resolved_files), remaining_conflicts), None
 
-def _continue_rebase_after_markdown_resolution(repo_path):
+def _continue_rebase_after_conflict_resolution(repo_path):
     auto_resolved_files = []
     while True:
-        resolution, resolution_error = _auto_resolve_markdown_conflicts(repo_path)
+        resolution, resolution_error = _auto_resolve_conflicts(repo_path)
         if resolution_error:
             return False, _dedupe_paths(auto_resolved_files), resolution_error
 
         if not resolution.resolved_files:
             if resolution.remaining_conflicts:
                 remaining = ", ".join(resolution.remaining_conflicts)
-                return False, _dedupe_paths(auto_resolved_files), f"Rebase stopped with non-Markdown conflicts: {remaining}"
+                return False, _dedupe_paths(auto_resolved_files), f"Rebase stopped with unresolvable conflicts: {remaining}"
             return False, _dedupe_paths(auto_resolved_files), "git pull --rebase failed but no conflicted files were reported"
 
         auto_resolved_files.extend(resolution.resolved_files)
         if resolution.remaining_conflicts:
             remaining = ", ".join(resolution.remaining_conflicts)
             return False, _dedupe_paths(auto_resolved_files), (
-                "Auto-resolved Markdown conflicts, but other conflicted files still need manual resolution: "
+                "Auto-resolved some conflicts, but others still need manual resolution: "
                 f"{remaining}"
             )
 
@@ -267,16 +304,16 @@ def git_sync(repo_path):
         if not _get_unmerged_files(repo_path):
             return False, _format_command_error("git pull --rebase", pull_result)
 
-        rebase_ok, rebase_result, rebase_error = _continue_rebase_after_markdown_resolution(repo_path)
+        rebase_ok, rebase_result, rebase_error = _continue_rebase_after_conflict_resolution(repo_path)
         if not rebase_ok:
             if rebase_result:
-                console.print("  [blue]Markdown conflict auto-resolution completed for:[/blue]")
+                console.print("  [blue]Auto-resolution completed for:[/blue]")
                 for file_path in rebase_result:
                     console.print(f"    - {file_path}")
             return False, rebase_error or _format_command_error("git pull --rebase", pull_result)
 
         if rebase_result:
-            console.print("  [blue]Markdown conflict auto-resolution completed for:[/blue]")
+            console.print("  [blue]Auto-resolution completed for:[/blue]")
             for file_path in rebase_result:
                 console.print(f"    - {file_path}")
 
@@ -417,6 +454,61 @@ def list_repos(ctx):
         return
     for repo in repos:
         console.print(f"  {repo}")
+
+
+@main.group(name="obsidian", help="Obsidian vault helpers.")
+def obsidian_group():
+    pass
+
+
+@obsidian_group.command(name="git-ignore", help="Create/update .gitignore in an Obsidian vault to exclude local state files, and untrack any already-tracked copies.")
+@click.argument('vault_path', type=click.Path(file_okay=False, path_type=Path))
+def obsidian_gitignore(vault_path):
+    vault = vault_path.resolve()
+    if not vault.is_dir():
+        console.print(f"[red]Not a directory:[/red] {vault}")
+        sys.exit(1)
+
+    # Build the managed block
+    patterns_text = "\n".join(OBSIDIAN_GITIGNORE_PATTERNS)
+    block = (
+        f"{_GITIGNORE_BLOCK_START}\n"
+        f"# Obsidian local state — managed by `sync-kb obsidian git-ignore`\n"
+        f"{patterns_text}\n"
+        f"{_GITIGNORE_BLOCK_END}"
+    )
+
+    # Update or create .gitignore
+    gitignore_path = vault / ".gitignore"
+    existing = gitignore_path.read_text(encoding='utf-8') if gitignore_path.exists() else ""
+    if _GITIGNORE_BLOCK_START in existing:
+        new_content = re.sub(
+            rf"{re.escape(_GITIGNORE_BLOCK_START)}.*?{re.escape(_GITIGNORE_BLOCK_END)}",
+            block,
+            existing,
+            flags=re.DOTALL,
+        )
+        console.print(f"[bold green]Updated[/bold green] managed block in {gitignore_path}")
+    else:
+        sep = "\n" if existing and not existing.endswith("\n") else ""
+        new_content = existing + sep + ("\n" if existing else "") + block + "\n"
+        console.print(f"[bold green]Created/updated[/bold green] {gitignore_path}")
+    gitignore_path.write_text(new_content, encoding='utf-8')
+
+    # Untrack files that are now ignored (keep them on disk)
+    untracked = []
+    for pattern in OBSIDIAN_GITIGNORE_PATTERNS:
+        ls_result = _run_git(str(vault), "ls-files", "--cached", "--", pattern)
+        if ls_result.returncode == 0 and ls_result.stdout.strip():
+            rm_result = _run_git(str(vault), "rm", "--cached", "-r", "--", pattern)
+            if rm_result.returncode == 0:
+                untracked.append(pattern)
+    if untracked:
+        console.print("[bold blue]Untracked from git (files kept on disk):[/bold blue]")
+        for p in untracked:
+            console.print(f"  {p}")
+
+    console.print("[dim]Run sync-kb to commit these changes.[/dim]")
 
 
 if __name__ == "__main__":
