@@ -71,12 +71,12 @@ def get_repos_from_config(custom_config_path: Path = None):
         config['DEFAULT'] = {
             'repos': ''
         }
-        with config_path.open('w') as f:
+        with config_path.open('w', encoding='utf-8') as f:
             config.write(f)
 
     # Read config
     config = configparser.ConfigParser()
-    config.read(config_path)
+    config.read(config_path, encoding='utf-8')
     return [repo.strip() for repo in config['DEFAULT']['repos'].split('\n') if repo.strip()]
 
 def write_repos_to_config(repos, custom_config_path: Path = None):
@@ -85,7 +85,7 @@ def write_repos_to_config(repos, custom_config_path: Path = None):
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config = configparser.ConfigParser()
     config['DEFAULT'] = {'repos': '\n' + '\n'.join(f'    {r}' for r in repos)}
-    with config_path.open('w') as f:
+    with config_path.open('w', encoding='utf-8') as f:
         config.write(f)
 
 def _format_command_error(command, result):
