@@ -330,6 +330,11 @@ def _print_result(result: CompressionResult) -> None:
     help="Extra raw ffmpeg argument (repeat this option to add more).",
 )
 @click.option("--dry-run", is_flag=True, help="Print ffmpeg commands without executing.")
+@click.option(
+    "--remove-original",
+    is_flag=True,
+    help="Delete the original input file(s) after successful compression.",
+)
 def main(
     input_videos: tuple[Path, ...],
     output: Path | None,
@@ -348,6 +353,7 @@ def main(
     overwrite: bool,
     extra_args: tuple[str, ...],
     dry_run: bool,
+    remove_original: bool,
 ) -> None:
     """
     Compress one or more videos using system ffmpeg.
@@ -411,6 +417,10 @@ def main(
 
         results.append(result)
         _print_result(result)
+
+        if remove_original and not dry_run:
+            input_video.unlink()
+            click.echo(f"Removed original: {input_video}")
 
     if len(input_videos) > 1:
         click.echo(
