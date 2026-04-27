@@ -3,6 +3,7 @@ from __future__ import annotations
 import shlex
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +30,17 @@ class CompressionResult:
     output_size: int | None
     calculated_video_kbps: int | None
     dry_run_command: list[str] | None = None
+
+
+@dataclass
+class WatchSnapshot:
+    size: int
+    mtime_ns: int
+    first_seen_at: float
+
+    @property
+    def key(self) -> tuple[int, int]:
+        return (self.size, self.mtime_ns)
 
 
 def _ensure_binary(binary_name: str) -> None:
@@ -122,6 +134,47 @@ def _format_bytes(num_bytes: int) -> str:
             return f"{value:.2f} {unit}"
         value /= 1024
     return f"{num_bytes} B"
+
+
+def _normalize_watch_extension(extension: str) -> str:
+    normalized = extension.strip().lower().removeprefix(".")
+    if not normalized:
+        raise click.ClickException("--watch-extension cannot be empty.")
+    if "/" in normalized or "\\" in normalized:
+        raise click.ClickException(
+            "--watch-extension must be a file extension, for example: mov"
+        )
+    return normalized
+
+
+def _watch_snapshot(path: Path, now: float) -> WatchSnapshot | None:
+    try:
+        stat_result = path.stat()
+    except OSError:
+        return None
+
+    if not path.is_file():
+        return None
+
+    return WatchSnapshot(
+        size=stat_result.st_size,
+        mtime_ns=stat_result.st_mtime_ns,
+        first_seen_at=now,
+    )
+
+
+def _iter_watch_candidates(directory: Path, extension: str) -> list[Path]:
+    suffix = f".{extension}"
+    candidates: list[Path] = []
+    for path in directory.iterdir():
+        if not path.is_file():
+            continue
+        if path.suffix.lower() != suffix:
+            continue
+        if path.stem.endswith("_compressed"):
+            continue
+        candidates.append(path)
+    return sorted(candidates)
 
 
 def _compress_single_video(
@@ -255,6 +308,112 @@ def _print_result(result: CompressionResult) -> None:
     click.echo()
 
 
+def _watch_directory(
+    *,
+    directory: Path,
+    extension: str,
+    watch_existing: bool,
+    watch_interval: float,
+    watch_settle_seconds: float,
+    output_dir: Path | None,
+    codec: str,
+    audio_codec: str,
+    preset: str,
+    crf: int,
+    video_bitrate: str | None,
+    audio_bitrate: str,
+    target_size_mb: float | None,
+    filter_chain: str | None,
+    remove_audio: bool,
+    overwrite: bool,
+    extra_args: tuple[str, ...],
+    dry_run: bool,
+    remove_original: bool,
+) -> None:
+    processed: dict[Path, tuple[int, int]] = {}
+    failed: dict[Path, tuple[int, int]] = {}
+    pending: dict[Path, WatchSnapshot] = {}
+
+    if not watch_existing:
+        now = time.monotonic()
+        for path in _iter_watch_candidates(directory, extension):
+            snapshot = _watch_snapshot(path, now)
+            if snapshot is not None:
+                processed[path.resolve()] = snapshot.key
+
+    click.echo(
+        f"Watching {directory} for new .{extension} files. Press Ctrl+C to stop."
+    )
+    if processed:
+        click.echo(f"Ignoring {len(processed)} existing matching file(s).")
+
+    try:
+        while True:
+            now = time.monotonic()
+            for input_video in _iter_watch_candidates(directory, extension):
+                resolved_input = input_video.resolve()
+                snapshot = _watch_snapshot(input_video, now)
+                if snapshot is None:
+                    continue
+
+                if processed.get(resolved_input) == snapshot.key:
+                    continue
+                if failed.get(resolved_input) == snapshot.key:
+                    continue
+
+                pending_snapshot = pending.get(resolved_input)
+                if pending_snapshot is None or pending_snapshot.key != snapshot.key:
+                    pending[resolved_input] = snapshot
+                    continue
+
+                if now - pending_snapshot.first_seen_at < watch_settle_seconds:
+                    continue
+
+                resolved_output = _resolve_output_path(
+                    input_video=input_video,
+                    output=None,
+                    output_dir=output_dir,
+                )
+                click.echo(f"Compressing new file: {input_video}")
+                try:
+                    result = _compress_single_video(
+                        input_video=input_video,
+                        output_path=resolved_output,
+                        codec=codec,
+                        audio_codec=audio_codec,
+                        preset=preset,
+                        crf=crf,
+                        video_bitrate=video_bitrate,
+                        audio_bitrate=audio_bitrate,
+                        target_size_mb=target_size_mb,
+                        filter_chain=filter_chain,
+                        remove_audio=remove_audio,
+                        overwrite=overwrite,
+                        extra_args=extra_args,
+                        dry_run=dry_run,
+                    )
+                except click.ClickException as exc:
+                    failed[resolved_input] = snapshot.key
+                    pending.pop(resolved_input, None)
+                    click.echo(f"Failed: {input_video}", err=True)
+                    click.echo(f"  {exc.format_message()}", err=True)
+                    click.echo(err=True)
+                    continue
+
+                processed[resolved_input] = snapshot.key
+                failed.pop(resolved_input, None)
+                pending.pop(resolved_input, None)
+                _print_result(result)
+
+                if remove_original and not dry_run:
+                    input_video.unlink()
+                    click.echo(f"Removed original: {input_video}")
+
+            time.sleep(watch_interval)
+    except KeyboardInterrupt:
+        click.echo("Stopping watcher...")
+
+
 @click.command()
 @click.argument(
     "input_videos",
@@ -329,6 +488,35 @@ def _print_result(result: CompressionResult) -> None:
     multiple=True,
     help="Extra raw ffmpeg argument (repeat this option to add more).",
 )
+@click.option(
+    "--watch",
+    "watch_directory",
+    type=click.Path(exists=True, file_okay=False, readable=True, path_type=Path),
+    help="Watch a directory for new videos instead of compressing positional inputs.",
+)
+@click.option(
+    "--watch-extension",
+    help="Extension to process in --watch mode, for example: mov or .mov.",
+)
+@click.option(
+    "--watch-existing",
+    is_flag=True,
+    help="Also compress matching files already present when watch mode starts.",
+)
+@click.option(
+    "--watch-interval",
+    type=click.FloatRange(min=0.25),
+    default=2.0,
+    show_default=True,
+    help="Seconds between watch scans.",
+)
+@click.option(
+    "--watch-settle-seconds",
+    type=click.FloatRange(min=0.0),
+    default=2.0,
+    show_default=True,
+    help="Seconds a new file must remain unchanged before compression.",
+)
 @click.option("--dry-run", is_flag=True, help="Print ffmpeg commands without executing.")
 @click.option(
     "--remove-original",
@@ -352,6 +540,11 @@ def main(
     remove_audio: bool,
     overwrite: bool,
     extra_args: tuple[str, ...],
+    watch_directory: Path | None,
+    watch_extension: str | None,
+    watch_existing: bool,
+    watch_interval: float,
+    watch_settle_seconds: float,
     dry_run: bool,
     remove_original: bool,
 ) -> None:
@@ -360,9 +553,6 @@ def main(
     """
     _ensure_binary("ffmpeg")
 
-    if not input_videos:
-        raise click.ClickException("Provide at least one input video.")
-
     if target_size_mb is not None and video_bitrate:
         raise click.ClickException(
             "Use either --target-size-mb or --video-bitrate, not both."
@@ -370,6 +560,15 @@ def main(
 
     if output is not None and output_dir is not None:
         raise click.ClickException("Use either --output or --output-dir, not both.")
+
+    if watch_directory is not None and input_videos:
+        raise click.ClickException("Use either --watch or input videos, not both.")
+
+    if watch_directory is not None and output is not None:
+        raise click.ClickException("--output is not allowed with --watch; use --output-dir.")
+
+    if watch_directory is None and watch_extension is not None:
+        raise click.ClickException("--watch-extension requires --watch.")
 
     if output is not None and len(input_videos) > 1:
         raise click.ClickException("--output is only allowed for a single input file.")
@@ -380,6 +579,40 @@ def main(
         output_dir.mkdir(parents=True, exist_ok=True)
 
     filter_chain = _build_filter_chain(max_width, max_height, fps)
+
+    if watch_directory is not None:
+        if watch_extension is None:
+            raise click.ClickException("--watch requires --watch-extension.")
+
+        _watch_directory(
+            directory=watch_directory,
+            extension=_normalize_watch_extension(watch_extension),
+            watch_existing=watch_existing,
+            watch_interval=watch_interval,
+            watch_settle_seconds=watch_settle_seconds,
+            output_dir=output_dir,
+            codec=codec,
+            audio_codec=audio_codec,
+            preset=preset,
+            crf=crf,
+            video_bitrate=video_bitrate,
+            audio_bitrate=audio_bitrate,
+            target_size_mb=target_size_mb,
+            filter_chain=filter_chain,
+            remove_audio=remove_audio,
+            overwrite=overwrite,
+            extra_args=extra_args,
+            dry_run=dry_run,
+            remove_original=remove_original,
+        )
+        return
+
+    if watch_existing:
+        raise click.ClickException("--watch-existing requires --watch.")
+
+    if not input_videos:
+        raise click.ClickException("Provide at least one input video or use --watch.")
+
     failures: list[tuple[Path, str]] = []
     results: list[CompressionResult] = []
 
