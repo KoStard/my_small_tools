@@ -6,6 +6,7 @@ import re
 import shlex
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -66,6 +67,12 @@ def get_config_path() -> Path:
 class RepoFailure:
     repo_path: str
     reason: str
+
+@dataclass
+class RepoSyncResult:
+    repo_path: str
+    messages: list[str]
+    failure: RepoFailure | None = None
 
 @dataclass
 class ConflictResolution:
@@ -168,7 +175,7 @@ def _merge_markdown_versions(ours, base, theirs):
             return None, _format_command_error("git merge-file --union", merge_result)
         return merge_result.stdout, None
 
-def _resolve_markdown_conflict(repo_path, file_path):
+def _resolve_markdown_conflict(repo_path, file_path, log=console.print):
     ours = _get_stage_blob(repo_path, 2, file_path)
     theirs = _get_stage_blob(repo_path, 3, file_path)
     base = _get_stage_blob(repo_path, 1, file_path) or b""
@@ -193,14 +200,14 @@ def _resolve_markdown_conflict(repo_path, file_path):
     if add_result.returncode != 0:
         return False, _format_command_error(f"git add -- {file_path}", add_result)
 
-    console.print(f"  [cyan]Auto-resolved Markdown conflict:[/cyan] {file_path}")
+    log(f"  [cyan]Auto-resolved Markdown conflict:[/cyan] {file_path}")
     return True, None
 
 def _is_obsidian_internal(file_path):
     parts = Path(file_path).parts
     return len(parts) > 0 and parts[0] == '.obsidian'
 
-def _resolve_with_remote(repo_path, file_path):
+def _resolve_with_remote(repo_path, file_path, log=console.print):
     """Resolve a conflict by taking the remote version (stage 2 = ours in rebase)."""
     content = _get_stage_blob(repo_path, 2, file_path)
     worktree_path = Path(repo_path) / file_path
@@ -215,10 +222,10 @@ def _resolve_with_remote(repo_path, file_path):
     if add_result.returncode != 0:
         return False, _format_command_error(f"git add -- {file_path}", add_result)
 
-    console.print(f"  [cyan]Auto-resolved conflict (keeping remote):[/cyan] {file_path}")
+    log(f"  [cyan]Auto-resolved conflict (keeping remote):[/cyan] {file_path}")
     return True, None
 
-def _auto_resolve_conflicts(repo_path):
+def _auto_resolve_conflicts(repo_path, log=console.print):
     unmerged_files = _get_unmerged_files(repo_path)
     if not unmerged_files:
         return ConflictResolution([], []), None
@@ -226,9 +233,9 @@ def _auto_resolve_conflicts(repo_path):
     resolved_files = []
     for file_path in unmerged_files:
         if _is_markdown_path(file_path):
-            resolve_ok, resolve_error = _resolve_markdown_conflict(repo_path, file_path)
+            resolve_ok, resolve_error = _resolve_markdown_conflict(repo_path, file_path, log=log)
         elif _is_obsidian_internal(file_path):
-            resolve_ok, resolve_error = _resolve_with_remote(repo_path, file_path)
+            resolve_ok, resolve_error = _resolve_with_remote(repo_path, file_path, log=log)
         else:
             continue
         if not resolve_ok:
@@ -238,10 +245,10 @@ def _auto_resolve_conflicts(repo_path):
     remaining_conflicts = _get_unmerged_files(repo_path)
     return ConflictResolution(_dedupe_paths(resolved_files), remaining_conflicts), None
 
-def _continue_rebase_after_conflict_resolution(repo_path):
+def _continue_rebase_after_conflict_resolution(repo_path, log=console.print):
     auto_resolved_files = []
     while True:
-        resolution, resolution_error = _auto_resolve_conflicts(repo_path)
+        resolution, resolution_error = _auto_resolve_conflicts(repo_path, log=log)
         if resolution_error:
             return False, _dedupe_paths(auto_resolved_files), resolution_error
 
@@ -281,7 +288,7 @@ def _continue_rebase_after_conflict_resolution(repo_path):
 
         return False, _dedupe_paths(auto_resolved_files), _format_command_error(continue_command, continue_result)
 
-def git_commit(repo_path):
+def git_commit(repo_path, log=console.print):
     """Commit all changes in the repository."""
     add_result = _run_git(repo_path, 'add', '.')
     if add_result.returncode != 0:
@@ -292,30 +299,30 @@ def git_commit(repo_path):
         return True, None
 
     if _has_no_changes_message(commit_result):
-        console.print(f"  [dim]No changes to commit in {repo_path}[/dim]")
+        log(f"  [dim]No changes to commit in {repo_path}[/dim]")
         return True, None
 
     return False, _format_command_error("git commit -m 'Auto-sync commit'", commit_result)
 
-def git_sync(repo_path):
+def git_sync(repo_path, log=console.print):
     """Sync repository with remote."""
     pull_result = _run_git(repo_path, 'pull', '--rebase')
     if pull_result.returncode != 0:
         if not _get_unmerged_files(repo_path):
             return False, _format_command_error("git pull --rebase", pull_result)
 
-        rebase_ok, rebase_result, rebase_error = _continue_rebase_after_conflict_resolution(repo_path)
+        rebase_ok, rebase_result, rebase_error = _continue_rebase_after_conflict_resolution(repo_path, log=log)
         if not rebase_ok:
             if rebase_result:
-                console.print("  [blue]Auto-resolution completed for:[/blue]")
+                log("  [blue]Auto-resolution completed for:[/blue]")
                 for file_path in rebase_result:
-                    console.print(f"    - {file_path}")
+                    log(f"    - {file_path}")
             return False, rebase_error or _format_command_error("git pull --rebase", pull_result)
 
         if rebase_result:
-            console.print("  [blue]Auto-resolution completed for:[/blue]")
+            log("  [blue]Auto-resolution completed for:[/blue]")
             for file_path in rebase_result:
-                console.print(f"    - {file_path}")
+                log(f"    - {file_path}")
 
     push_result = _run_git(repo_path, 'push')
     if push_result.returncode != 0:
@@ -326,6 +333,36 @@ def git_sync(repo_path):
 def _sanitize_reason(reason):
     """Normalize multi-line git output into one concise line."""
     return " ".join(reason.split())
+
+def _sync_single_repository(repo_path):
+    """Sync one configured repository and collect its printable status lines."""
+    messages = []
+
+    def log(message):
+        messages.append(message)
+
+    path = Path(repo_path).expanduser()
+    if not path.exists():
+        reason = "Repository path does not exist"
+        messages.append(f"[bold red]❌ Repository path does not exist:[/bold red] {repo_path}")
+        return RepoSyncResult(str(path), messages, RepoFailure(str(path), reason))
+
+    log(f"[bold cyan]Syncing repository:[/bold cyan] {path}")
+
+    commit_ok, commit_error = git_commit(str(path), log=log)
+    if not commit_ok:
+        reason = _sanitize_reason(commit_error)
+        log(f"  [bold red]❌ Commit failed:[/bold red] {reason}")
+        return RepoSyncResult(str(path), messages, RepoFailure(str(path), reason))
+
+    sync_ok, sync_error = git_sync(str(path), log=log)
+    if not sync_ok:
+        reason = _sanitize_reason(sync_error)
+        log(f"  [bold red]❌ Sync failed:[/bold red] {reason}")
+        return RepoSyncResult(str(path), messages, RepoFailure(str(path), reason))
+
+    log("  [bold green]✅ Synced successfully[/bold green]")
+    return RepoSyncResult(str(path), messages)
 
 def _drop_into_failed_repo(repo_path):
     """Open an interactive shell in the failed repo when possible."""
@@ -347,35 +384,42 @@ def _drop_into_failed_repo(repo_path):
     console.print("[dim]Opening an interactive shell there for fixes. Exit the shell when finished.[/dim]")
     subprocess.run([shell], cwd=str(failed_repo_path), check=False)
 
-def sync_repositories(repos):
+def sync_repositories(repos, workers=4):
     """Sync all repositories and return per-repo failures."""
     failures = []
-    
-    with console.status("[bold green]Starting sync process...", spinner="dots"):
-        for repo_path in repos:
-            path = Path(repo_path).expanduser()
-            if not path.exists():
-                console.print(f"[bold red]❌ Repository path does not exist:[/bold red] {repo_path}")
-                failures.append(RepoFailure(str(path), "Repository path does not exist"))
-                continue
-                
-            console.print(f"[bold cyan]Syncing repository:[/bold cyan] {path}")
-            
-            # Commit changes if any
-            commit_ok, commit_error = git_commit(str(path))
-            if not commit_ok:
-                console.print(f"  [bold red]❌ Commit failed:[/bold red] {_sanitize_reason(commit_error)}")
-                failures.append(RepoFailure(str(path), _sanitize_reason(commit_error)))
-                continue
-            
-            # Sync with remote
-            sync_ok, sync_error = git_sync(str(path))
-            if not sync_ok:
-                console.print(f"  [bold red]❌ Sync failed:[/bold red] {_sanitize_reason(sync_error)}")
-                failures.append(RepoFailure(str(path), _sanitize_reason(sync_error)))
-            else:
-                console.print(f"  [bold green]✅ Synced successfully[/bold green]")
-                
+    if not repos:
+        return failures
+
+    worker_count = max(1, min(workers, len(repos)))
+    status = f"[bold green]Syncing {len(repos)} repositories with {worker_count} worker(s)..."
+
+    with console.status(status, spinner="dots"):
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            future_to_repo = {
+                executor.submit(_sync_single_repository, repo_path): repo_path
+                for repo_path in repos
+            }
+            for future in as_completed(future_to_repo):
+                repo_path = future_to_repo[future]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    path = Path(repo_path).expanduser()
+                    reason = _sanitize_reason(f"{type(exc).__name__}: {exc}")
+                    result = RepoSyncResult(
+                        str(path),
+                        [
+                            f"[bold cyan]Syncing repository:[/bold cyan] {path}",
+                            f"  [bold red]❌ Sync failed:[/bold red] {reason}",
+                        ],
+                        RepoFailure(str(path), reason),
+                    )
+
+                for message in result.messages:
+                    console.print(message)
+                if result.failure:
+                    failures.append(result.failure)
+
     return failures
 
 def print_failure_report(failures):
@@ -387,8 +431,9 @@ def print_failure_report(failures):
 
 @click.group(invoke_without_command=True, help="Synchronize multiple git-based knowledge bases (Obsidian, LogSeq, etc.).\n\nRun without a subcommand to sync all configured repositories.")
 @click.option('--config-file', type=click.Path(exists=False, dir_okay=False, path_type=Path), help='Path to an alternative config file.')
+@click.option('--workers', '-j', default=4, show_default=True, type=click.IntRange(min=1), help='Maximum repositories to sync concurrently.')
 @click.pass_context
-def main(ctx, config_file):
+def main(ctx, config_file, workers):
     ctx.ensure_object(dict)
     ctx.obj['config_file'] = config_file
     if ctx.invoked_subcommand is not None:
@@ -403,7 +448,7 @@ def main(ctx, config_file):
         console.print(f"Config file: [bold]{path_to_print}[/bold]")
         sys.exit(1)
 
-    failures = sync_repositories(repos)
+    failures = sync_repositories(repos, workers=workers)
     if not failures:
         console.print("\n[bold green]✅ All repositories synced successfully![/bold green]")
     else:

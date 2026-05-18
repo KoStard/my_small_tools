@@ -7,6 +7,7 @@ A simple tool to automatically sync multiple git-based (knowledge base) reposito
 - Automatic commit of changes
 - Pull with rebase
 - Push changes to remote
+- Concurrent sync across repositories
 - Configurable repository paths
 - Markdown-aware conflict auto-resolution that keeps both sides' edits
 - Non-Markdown conflicts still stop for normal git resolution
@@ -42,6 +43,11 @@ To add or modify repositories:
 Run the sync tool:
 ```bash
 uv run sync-knowledge-base
+```
+
+By default, up to 4 repositories sync concurrently. To change that:
+```bash
+uv run sync-knowledge-base --workers 2
 ```
 
 If failures occur:
