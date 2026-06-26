@@ -14,6 +14,7 @@ from tempfile import TemporaryDirectory
 import click
 from appdirs import user_config_dir
 from rich.console import Console
+from rich.table import Table
 
 console = Console()
 
@@ -73,6 +74,16 @@ class RepoSyncResult:
     repo_path: str
     messages: list[str]
     failure: RepoFailure | None = None
+
+@dataclass
+class RepoLocalStatus:
+    repo_path: str
+    branch: str
+    state_key: str
+    state_label: str
+    changes: str
+    operation: str
+    details: list[str]
 
 @dataclass
 class ConflictResolution:
@@ -334,6 +345,272 @@ def _sanitize_reason(reason):
     """Normalize multi-line git output into one concise line."""
     return " ".join(reason.split())
 
+CONFLICT_STATUS_CODES = {"DD", "AU", "UD", "UA", "DU", "AA", "UU"}
+
+GIT_OPERATION_MARKERS = [
+    ("rebase-merge", "rebase"),
+    ("rebase-apply", "rebase/apply"),
+    ("MERGE_HEAD", "merge"),
+    ("CHERRY_PICK_HEAD", "cherry-pick"),
+    ("REVERT_HEAD", "revert"),
+    ("BISECT_LOG", "bisect"),
+]
+
+def _run_git_read_only(repo_path, *args):
+    env = os.environ.copy()
+    env["GIT_OPTIONAL_LOCKS"] = "0"
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo_path,
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+
+def _git_path_exists(repo_path, git_path):
+    result = _run_git_read_only(repo_path, "rev-parse", "--git-path", git_path)
+    if result.returncode != 0:
+        return False
+
+    marker_path = Path(result.stdout.strip())
+    if not marker_path.is_absolute():
+        marker_path = Path(repo_path) / marker_path
+    return marker_path.exists()
+
+def _detect_git_operation(repo_path):
+    operations = [
+        label
+        for marker, label in GIT_OPERATION_MARKERS
+        if _git_path_exists(repo_path, marker)
+    ]
+    return ", ".join(operations) if operations else "-"
+
+def _parse_short_status(lines):
+    counts = {
+        "staged": 0,
+        "unstaged": 0,
+        "untracked": 0,
+        "conflicted": 0,
+    }
+
+    for line in lines:
+        if not line or line.startswith("## "):
+            continue
+        code = line[:2]
+        if code in CONFLICT_STATUS_CODES:
+            counts["conflicted"] += 1
+            continue
+        if code == "??":
+            counts["untracked"] += 1
+            continue
+        if code == "!!":
+            continue
+
+        index_status = code[0] if len(code) > 0 else " "
+        worktree_status = code[1] if len(code) > 1 else " "
+        if index_status != " ":
+            counts["staged"] += 1
+        if worktree_status != " ":
+            counts["unstaged"] += 1
+
+    return counts
+
+def _format_change_counts(counts):
+    parts = []
+    for key, label in (
+        ("conflicted", "conflicted"),
+        ("staged", "staged"),
+        ("unstaged", "unstaged"),
+        ("untracked", "untracked"),
+    ):
+        value = counts[key]
+        if value:
+            parts.append(f"{value} {label}")
+    return ", ".join(parts) if parts else "clean"
+
+def _format_path_sample(paths, limit=5):
+    if not paths:
+        return ""
+    visible = ", ".join(paths[:limit])
+    remaining = len(paths) - limit
+    if remaining > 0:
+        visible = f"{visible}, ... (+{remaining} more)"
+    return visible
+
+def _format_repo_path(path):
+    if not path.is_absolute():
+        return str(path)
+    try:
+        return f"~/{path.relative_to(Path.home())}"
+    except ValueError:
+        return str(path)
+
+def _local_repo_status(repo_path):
+    path = Path(repo_path).expanduser()
+    display_path = _format_repo_path(path)
+
+    if not path.exists():
+        return RepoLocalStatus(
+            display_path,
+            "-",
+            "error",
+            "[bold red]missing[/bold red]",
+            "-",
+            "-",
+            ["Repository path does not exist."],
+        )
+
+    if not path.is_dir():
+        return RepoLocalStatus(
+            display_path,
+            "-",
+            "error",
+            "[bold red]error[/bold red]",
+            "-",
+            "-",
+            ["Configured path is not a directory."],
+        )
+
+    repo_check = _run_git_read_only(str(path), "rev-parse", "--is-inside-work-tree")
+    if repo_check.returncode != 0 or repo_check.stdout.strip() != "true":
+        return RepoLocalStatus(
+            display_path,
+            "-",
+            "error",
+            "[bold red]not git[/bold red]",
+            "-",
+            "-",
+            [_sanitize_reason(repo_check.stderr or repo_check.stdout or "Not a git repository.")],
+        )
+
+    status_result = _run_git_read_only(
+        str(path),
+        "status",
+        "--short",
+        "--branch",
+        "--untracked-files=normal",
+    )
+    if status_result.returncode != 0:
+        return RepoLocalStatus(
+            display_path,
+            "-",
+            "error",
+            "[bold red]git error[/bold red]",
+            "-",
+            "-",
+            [_sanitize_reason(status_result.stderr or status_result.stdout)],
+        )
+
+    lines = status_result.stdout.splitlines()
+    branch = "-"
+    if lines and lines[0].startswith("## "):
+        branch = lines[0][3:].strip() or "-"
+
+    counts = _parse_short_status(lines)
+    unmerged_files = _get_unmerged_files(str(path))
+    counts["conflicted"] = max(counts["conflicted"], len(unmerged_files))
+    operation = _detect_git_operation(str(path))
+
+    if counts["conflicted"]:
+        state_key = "conflict"
+        state_label = "[bold red]conflict[/bold red]"
+    elif operation != "-":
+        state_key = "in_progress"
+        state_label = "[bold yellow]in progress[/bold yellow]"
+    elif any(counts.values()):
+        state_key = "dirty"
+        state_label = "[yellow]dirty[/yellow]"
+    else:
+        state_key = "clean"
+        state_label = "[green]clean[/green]"
+
+    details = []
+    conflict_sample = _format_path_sample(unmerged_files)
+    if conflict_sample:
+        details.append(f"conflicts: {conflict_sample}")
+
+    return RepoLocalStatus(
+        display_path,
+        branch,
+        state_key,
+        state_label,
+        _format_change_counts(counts),
+        operation,
+        details,
+    )
+
+def print_repository_statuses(repos, workers=4):
+    """Print local git status for configured repositories without network calls."""
+    if not repos:
+        return
+
+    worker_count = max(1, min(workers, len(repos)))
+    results = [None] * len(repos)
+    with console.status(
+        f"[bold green]Checking {len(repos)} repositories locally with {worker_count} worker(s)...",
+        spinner="dots",
+    ):
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            future_to_index = {
+                executor.submit(_local_repo_status, repo_path): index
+                for index, repo_path in enumerate(repos)
+            }
+            for future in as_completed(future_to_index):
+                index = future_to_index[future]
+                try:
+                    results[index] = future.result()
+                except Exception as exc:
+                    path = Path(repos[index]).expanduser()
+                    results[index] = RepoLocalStatus(
+                        _format_repo_path(path),
+                        "-",
+                        "error",
+                        "[bold red]error[/bold red]",
+                        "-",
+                        "-",
+                        [_sanitize_reason(f"{type(exc).__name__}: {exc}")],
+                    )
+
+    table = Table(show_header=True, header_style="bold blue")
+    table.add_column("State", no_wrap=True)
+    table.add_column("Repo", overflow="fold")
+    table.add_column("Git", overflow="fold")
+
+    summary = {
+        "clean": 0,
+        "dirty": 0,
+        "in_progress": 0,
+        "conflict": 0,
+        "error": 0,
+    }
+    for result in results:
+        summary[result.state_key] = summary.get(result.state_key, 0) + 1
+        git_details = [
+            f"branch: {result.branch}",
+            f"changes: {result.changes}",
+            f"operation: {result.operation}",
+            *result.details,
+        ]
+        table.add_row(
+            result.state_label,
+            result.repo_path,
+            "\n".join(git_details),
+        )
+
+    console.print(table)
+    console.print(
+        "[dim]Local only: no fetch, pull, push, or other network calls. "
+        "Ahead/behind data comes from existing local refs.[/dim]"
+    )
+    console.print(
+        "[bold]Summary:[/bold] "
+        f"{summary['clean']} clean, "
+        f"{summary['dirty']} dirty, "
+        f"{summary['in_progress']} in progress, "
+        f"{summary['conflict']} conflict, "
+        f"{summary['error']} error"
+    )
+
 def _sync_single_repository(repo_path):
     """Sync one configured repository and collect its printable status lines."""
     messages = []
@@ -432,10 +709,24 @@ def print_failure_report(failures):
 @click.group(invoke_without_command=True, help="Synchronize multiple git-based knowledge bases (Obsidian, LogSeq, etc.).\n\nRun without a subcommand to sync all configured repositories.")
 @click.option('--config-file', type=click.Path(exists=False, dir_okay=False, path_type=Path), help='Path to an alternative config file.')
 @click.option('--workers', '-j', default=4, show_default=True, type=click.IntRange(min=1), help='Maximum repositories to sync concurrently.')
+@click.option('--status', 'show_status', is_flag=True, help='Show local git status for configured repositories without network calls.')
 @click.pass_context
-def main(ctx, config_file, workers):
+def main(ctx, config_file, workers, show_status):
     ctx.ensure_object(dict)
     ctx.obj['config_file'] = config_file
+    if show_status:
+        console.rule("[bold blue]Knowledge Base Status[/bold blue]")
+        repos = get_repos_from_config(config_file)
+        if not repos:
+            path_to_print = config_file or get_config_path()
+            console.print("[yellow]No repositories configured.[/yellow]")
+            console.print(f"Add one with: [bold cyan]sync-knowledge-base add <path>[/bold cyan]")
+            console.print(f"Config file: [bold]{path_to_print}[/bold]")
+            ctx.exit(1)
+
+        print_repository_statuses(repos, workers=workers)
+        ctx.exit(0)
+
     if ctx.invoked_subcommand is not None:
         return
 
@@ -444,7 +735,7 @@ def main(ctx, config_file, workers):
     if not repos:
         path_to_print = config_file or get_config_path()
         console.print("[yellow]No repositories configured.[/yellow]")
-        console.print(f"Add one with: [bold cyan]sync-kb add <path>[/bold cyan]")
+        console.print(f"Add one with: [bold cyan]sync-knowledge-base add <path>[/bold cyan]")
         console.print(f"Config file: [bold]{path_to_print}[/bold]")
         sys.exit(1)
 

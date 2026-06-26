@@ -9,6 +9,7 @@ A simple tool to automatically sync multiple git-based (knowledge base) reposito
 - Push changes to remote
 - Concurrent sync across repositories
 - Configurable repository paths
+- Local-only status report across all configured repositories
 - Markdown-aware conflict auto-resolution that keeps both sides' edits
 - Non-Markdown conflicts still stop for normal git resolution
 - Continues syncing remaining repositories when one fails
@@ -49,6 +50,13 @@ By default, up to 4 repositories sync concurrently. To change that:
 ```bash
 uv run sync-knowledge-base --workers 2
 ```
+
+Check every configured repository without network calls:
+```bash
+uv run sync-knowledge-base --status
+```
+
+The status report shows the current branch/upstream line, clean/dirty/conflict state, local change counts, and whether a merge, rebase, cherry-pick, revert, or bisect is in progress. Ahead/behind information uses existing local refs only; it does not fetch.
 
 If failures occur:
 1. The tool will continue syncing other repositories
