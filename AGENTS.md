@@ -29,6 +29,7 @@ Registered entry points (`pyproject.toml`):
 - `uv run forecast ...`
 - `uv run remove_bg ...`
 - `uv run youtube-transcribe ...`
+- `uv run stt <audio-file> [--summarize]`
 
 Unregistered scripts (run by path):
 - `uv run my_small_tools/text_to_speech.py ...`
@@ -39,6 +40,7 @@ Unregistered scripts (run by path):
 ## Environment And External Dependencies
 - Python: `>=3.12` (project baseline). Some standalone scripts may require newer Python at runtime.
 - `writing_forge` analysis requires `OPENROUTER_API_KEY` and network access (OpenRouter endpoint).
+- `stt` requires `OPENROUTER_API_KEY` and OpenRouter access. Install `ffmpeg` and `ffprobe` for automatic audio conversion/chunking; without them, supported files under 25 MB upload directly.
 - `ffmpeg_convert` requires `ffmpeg` available in `PATH`.
 - `text_to_speech.py` requires `piper` in `PATH` and an ONNX voice model/config.
 - `sync_knowledge_base` config file location: `~/.config/my_small_tools/sync_knowledge_base.ini` (or platform equivalent).

@@ -29,6 +29,7 @@ dependencies = [
 ]
 
 [project.scripts]
+stt = "my_small_tools.stt:main"
 writing-forge = "my_small_tools.writing_forge.main:cli"
 sync-knowledge-base = "my_small_tools.sync_knowledge_base:main"
 hermes-research = "my_small_tools.hermes_research.hermes_research_manager:main"
