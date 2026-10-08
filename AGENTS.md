@@ -9,7 +9,7 @@
 - There is no formal automated test suite in this repo today.
 
 ## Repository Map
-- `my_small_tools/scopy.py`: save an SSH target and copy files/folders into its Downloads with unique names.
+- `my_small_tools/scopy.py`: save an SSH target, send files/folders into its Downloads, or download into local Downloads, with unique names and live progress.
 - `my_small_tools/writing_forge/`: AI-assisted prose analysis pipeline (parse -> analyze -> render/compile) with JSON caching.
 - `my_small_tools/sync_knowledge_base.py`: sync multiple git repos from config (`pull --rebase`, commit, push).
 - `my_small_tools/forecast.py`: CSV time-series forecasting and plot generation.
@@ -24,6 +24,7 @@ Use `uv run` from repo root.
 
 Registered entry points (`pyproject.toml`):
 - `uv run scopy set-target <ssh-target>` / `uv run scopy send <file-or-folder>`
+- `uv run scopy download <remote-path>`
 - `uv run writing-forge ...`
 - `uv run sync-knowledge-base`
 - `uv run ls-time ...`
@@ -40,7 +41,7 @@ Unregistered scripts (run by path):
 - `uv run my_small_tools/google_maps_embed_generator.py ...`
 
 ## Environment And External Dependencies
-- `scopy` requires local `ssh`, a POSIX shell on the target, and remote `tar` for folders. Target config: `~/.config/my_small_tools/scopy-target` (or platform equivalent).
+- `scopy` requires local `ssh`, a POSIX shell on the target, and remote `tar` for folders. Target config: `~/.config/my_small_tools/scopy-target` (or platform equivalent). Unix SSH control sockets: `/tmp/scopy-ssh-<uid>` (connections persist 60 seconds).
 - Python: `>=3.12` (project baseline). Some standalone scripts may require newer Python at runtime.
 - `writing_forge` analysis requires `OPENROUTER_API_KEY` and network access (OpenRouter endpoint).
 - `stt` requires `OPENROUTER_API_KEY` and OpenRouter access. Install `ffmpeg` and `ffprobe` for automatic audio conversion/chunking; without them, supported files under 25 MB upload directly.

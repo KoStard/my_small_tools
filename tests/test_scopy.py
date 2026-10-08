@@ -19,6 +19,8 @@ class ScopyTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.remote = self.root / "remote home ' with spaces"
         self.remote.mkdir()
+        self.local_home = self.root / "local-home"
+        self.local_home.mkdir()
         self.config = self.root / "config" / "scopy-target"
         self.runner = CliRunner()
         self.real_run = subprocess.run
@@ -28,8 +30,9 @@ class ScopyTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def remote_command(self, arguments):
-        self.assertEqual(arguments[:2], ["ssh", "test-host"])
-        return ["/bin/sh", "-c", arguments[2]]
+        self.assertEqual(arguments[0], "ssh")
+        self.assertEqual(arguments[-2], "test-host")
+        return ["/bin/sh", "-c", arguments[-1]]
 
     def run_ssh(self, arguments, **kwargs):
         # subprocess.run itself uses Popen, which is patched below.
@@ -41,6 +44,7 @@ class ScopyTests(unittest.TestCase):
 
     def invoke(self, arguments):
         with patch.object(scopy, "config_path", return_value=self.config), \
+                patch.object(scopy.Path, "home", return_value=self.local_home), \
                 patch.object(scopy.subprocess, "run", side_effect=self.run_ssh), \
                 patch.object(scopy.subprocess, "Popen", side_effect=self.popen_ssh):
             return self.runner.invoke(scopy.main, arguments)
@@ -118,7 +122,7 @@ class ScopyTests(unittest.TestCase):
         original_popen = self.popen_ssh
 
         def fail_transfer(arguments, **kwargs):
-            if arguments[2].startswith("cat >"):
+            if arguments[-1].startswith("cat >"):
                 return self.real_popen(["/bin/sh", "-c", "exit 1"], **kwargs)
             return original_popen(arguments, **kwargs)
 
@@ -127,6 +131,80 @@ class ScopyTests(unittest.TestCase):
         self.assertNotEqual(result.exit_code, 0)
         self.assertIn("incomplete copy", result.output)
         self.assertIn("file.txt", result.output)
+
+    def test_download_file_with_remote_home_and_collisions(self):
+        self.configure()
+        source = self.remote / "report ' $(touch injected).txt"
+        source.write_bytes(bytes(range(256)) * 9000)
+        for suffix in ["", "_1"]:
+            result = self.invoke(["download", "~/" + source.name])
+            self.assertEqual(result.exit_code, 0, result.output)
+            destination = self.local_home / "Downloads" / f"{source.stem}{suffix}.txt"
+            self.assertEqual(destination.read_bytes(), source.read_bytes())
+            self.assertIn("Source:", result.output)
+            self.assertIn("Destination:", result.output)
+            self.assertIn("Downloaded", result.output)
+
+    def test_download_folder_with_relative_path_and_contents(self):
+        self.configure()
+        source = self.remote / "photos.v1"
+        source.mkdir()
+        (source / ".hidden").write_text("hidden")
+        (source / "large.bin").write_bytes(b"x" * (scopy.BUFFER_SIZE * 2 + 100))
+        (source / "empty").mkdir()
+        (source / "link").symlink_to(".hidden")
+        for suffix in ["", "_1"]:
+            result = self.invoke(["download", "photos.v1/"])
+            self.assertEqual(result.exit_code, 0, result.output)
+            destination = self.local_home / "Downloads" / f"photos.v1{suffix}"
+            self.assertEqual((destination / ".hidden").read_text(), "hidden")
+            self.assertEqual((destination / "large.bin").read_bytes(), (source / "large.bin").read_bytes())
+            self.assertTrue((destination / "empty").is_dir())
+            self.assertEqual((destination / "link").readlink(), Path(".hidden"))
+
+    def test_download_missing_path_does_not_create_destination(self):
+        self.configure()
+        result = self.invoke(["download", "/missing-scopy-fixture"])
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertFalse((self.local_home / "Downloads").exists())
+
+    def test_download_rejects_folder_link_outside_destination(self):
+        self.configure()
+        source = self.remote / "unsafe"
+        source.mkdir()
+        (source / "link").symlink_to("../outside")
+        result = self.invoke(["download", "unsafe"])
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("Download failed", result.output)
+        self.assertFalse((self.local_home / "Downloads" / "unsafe" / "link").exists())
+
+    def test_download_failed_stream_reports_partial_file(self):
+        self.configure()
+        (self.remote / "file.txt").write_text("full payload")
+        original_popen = self.popen_ssh
+
+        def fail_download(arguments, **kwargs):
+            if arguments[-1].startswith("cat <"):
+                return self.real_popen(["/bin/sh", "-c", "printf partial; exit 1"], **kwargs)
+            return original_popen(arguments, **kwargs)
+
+        with patch.object(self, "popen_ssh", side_effect=fail_download):
+            result = self.invoke(["download", "file.txt"])
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("incomplete copy", result.output)
+        self.assertEqual((self.local_home / "Downloads" / "file.txt").read_text(), "partial")
+
+    def test_empty_download_and_ssh_performance_options(self):
+        self.configure()
+        (self.remote / "empty").touch()
+        result = self.invoke(["download", "empty"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual((self.local_home / "Downloads" / "empty").stat().st_size, 0)
+        arguments = scopy.ssh_command("test-host", "true")
+        self.assertIn("Compression=no", arguments)
+        if os.name == "posix":
+            self.assertIn("ControlMaster=auto", arguments)
+            self.assertIn("ControlPersist=60", arguments)
 
 
 if __name__ == "__main__":

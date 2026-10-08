@@ -6,6 +6,8 @@
 scopy set-target netcup-dev
 scopy send ./report.pdf
 scopy send ./photos
+scopy download /var/log/example.log
+scopy download '~/photos'
 # From the checkout, prefix these commands with `uv run`.
 ```
 
@@ -23,6 +25,20 @@ transfer speed, and elapsed time; files also show percentage and estimated time 
 Folders show streaming progress without a fixed total (bytes include archive metadata).
 Requires local `ssh`, a POSIX shell on the target, and remote `tar` for folders.
 A failed transfer reports its destination; an incomplete copy can remain there.
+
+`scopy download <remote-path>` uses the same saved target and puts the file or
+folder in your **local** `~/Downloads`, adding the same unique indices when needed.
+Relative remote paths start in the remote home directory. Quote `'~/path'` so your
+local shell does not expand it. Downloads show both the source and destination,
+with the same live progress display. Folder downloads use safe tar extraction;
+symlinks pointing outside the downloaded folder are rejected.
+
+Transfers stream directly through OpenSSH with 1 MiB buffers. Folders use an
+uncompressed tar stream with no intermediate archive. SSH compression is disabled
+to avoid CPU overhead on fast links. On Unix, authenticated SSH connections are
+reused for 60 seconds, with private control sockets in `/tmp/scopy-ssh-<uid>`.
+SSH encryption and host-key checks stay enabled. Actual throughput depends on
+the network, disks, and SSH encryption speed.
 
 ## Knowledge Base Sync Tool
 
