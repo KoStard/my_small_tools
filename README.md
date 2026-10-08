@@ -128,7 +128,8 @@ hints the transcription language; otherwise detection is automatic.
 
 Every profile retains all extracted actions, decisions, important facts/dates,
 quotes, and open questions. Short is not a hard word limit: dense meetings still
-need space. Change profiles without `--force` to reuse transcription.
+need space. STT does not set an output-token cap on either notes API pass;
+provider/model limits still apply, and any abnormal stop reports its actual reason. Change profiles without `--force` to reuse transcription.
 
 ```text
 - October launch

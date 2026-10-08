@@ -227,15 +227,22 @@ def text_parts(text: str, limit: int = 24000):
 
 
 def ask_json(api_key: str, instructions: str, content: str, schema: type[BaseModel]):
+    messages = [{"role": "system", "content": instructions +
+                 "\nReturn ONLY JSON matching this schema: " + json.dumps(schema.model_json_schema())},
+                {"role": "user", "content": content}]
     response = request("chat/completions", api_key, json={
-        "model": SUMMARY_MODEL, "temperature": 0, "max_tokens": 12000,
-        "messages": [{"role": "system", "content": instructions +
-                      "\nReturn ONLY JSON matching this schema: " + json.dumps(schema.model_json_schema())},
-                     {"role": "user", "content": content}],
+        "model": SUMMARY_MODEL, "temperature": 0, "messages": messages,
     })
     choice = response["choices"][0]
-    if choice.get("finish_reason") != "stop":
-        raise click.ClickException("Notes response did not finish normally; transcript is saved. Rerun --summarize.")
+    reason = choice.get("finish_reason")
+    if reason != "stop":
+        # Expose the normalized stop reason, but never provider response content.
+        label = reason if reason in {"length", "content_filter", "tool_calls", "error"} else "unknown"
+        explanation = " The provider reached its own output limit." if reason == "length" else ""
+        raise click.ClickException(
+            f"Notes response stopped with finish_reason={label}.{explanation} "
+            "STT sets no output-token cap; transcript is saved."
+        )
     content = choice["message"]["content"].strip()
     if content.startswith("```"):
         content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content)

@@ -135,6 +135,27 @@ class STTTests(unittest.TestCase):
                 with self.assertRaises(click.ClickException):
                     stt.extract_notes("Actual words", "fake-key", {"P1": "Ruben"}, "", None)
 
+    def test_notes_requests_do_not_set_output_token_limits(self):
+        complete = self.summary_response(self.sample_notes().model_dump())
+        with patch.object(stt, "request", return_value=complete) as request:
+            stt.ask_json("fake-key", "Instructions", "Transcript", stt.Notes)
+        payload = request.call_args.kwargs["json"]
+        self.assertNotIn("max_tokens", payload)
+        self.assertNotIn("max_completion_tokens", payload)
+        self.assertNotIn("max_output_tokens", payload)
+
+    def test_provider_output_limit_reports_reason_without_accepting_partial_json(self):
+        with patch.object(stt, "request", return_value=self.summary_response({}, "length")) as request:
+            with self.assertRaisesRegex(click.ClickException, "finish_reason=length"):
+                stt.ask_json("fake-key", "Instructions", "Transcript", stt.Notes)
+        self.assertEqual(request.call_count, 1)
+
+    def test_non_length_finish_reason_is_reported_without_retry(self):
+        with patch.object(stt, "request", return_value=self.summary_response({}, "content_filter")) as request:
+            with self.assertRaisesRegex(click.ClickException, "finish_reason=content_filter"):
+                stt.ask_json("fake-key", "Instructions", "Transcript", stt.Notes)
+        self.assertEqual(request.call_count, 1)
+
     def test_anonymous_statement_does_not_get_roster_owner(self):
         response = self.summary_response({"topics": [{"title": "Proposal", "points": [
             {"kind": "action", "text": "Send proposal", "evidence": "I will send it.", "owner": "P1"},
