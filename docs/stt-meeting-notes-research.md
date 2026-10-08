@@ -12,20 +12,18 @@ questions, and TODOs belong beneath their subject. Repeated visits to a subject
 should be consolidated. Avoid global category buckets and repetitive category
 subheadings inside each topic.
 
-Profiles change explanatory depth. All three retain supported actions, decisions,
-important factual details, dates/numbers, important quotes, and open questions.
-`short` selects up to one quarter of optional discussion entries; `middle` selects
-up to 60 percent (both budgets rounded upward to whole entries) and includes important reasoning; `long` retains the full
-substantive discussion inventory. None imposes an absolute word limit that could
-hide commitments. A meeting containing many obligations will produce longer
-notes even in the short profile.
+Profiles control explanatory depth through the prompt. All three ask for supported
+actions, important decisions, facts, dates/numbers, quotes and open questions.
+Short compresses discussion; middle includes important reasoning; long includes
+fuller substantive detail. There are no fixed word counts or numerical detail
+budgets.
 
-The runtime follows two stages: extract an evidence inventory, then organize its
-entries by topic. The organizer selects existing entries by ID, rather than
-rewriting protected content. It may omit optional discussion detail in short or
-middle, but validation requires every protected entry exactly once. Long must
-retain every entry. There is no freely generated body overview that could bypass
-these checks.
+The implementation makes one model call with the complete transcript and saves
+its plain LogSeq output. It does not require the model to emit JSON, copy long
+evidence spans, or pass an additional organizing/validation stage. Exact-string
+checks added operational fragility without establishing semantic correctness;
+they have been removed. Prompt instructions retain the desired faithfulness,
+topic grouping and conservative attribution. Critical details still need review.
 
 ## Established industry patterns
 
@@ -58,8 +56,9 @@ preference; recognizable `TODO` markers preserve scanability inside that layout.
 uses sectional/topic processing and contextual action extraction, reporting results
 on the AMI benchmark with BART-era models. It supports considering extraction and
 organization separately, but does not establish Claude Haiku performance or
-complete action recall. The practical lesson is to preserve an inventory across
-processing stages and check that shortening does not discard it.
+complete action recall. The practical lesson is to pay particular attention to obligations and context
+when shortening a meeting. This research does not require an inventory-ID
+pipeline for this CLI.
 
 Neither paper validates this implementation. Synthetic checks cover selected
 failure modes; evaluation on the user's actual recordings remains valuable.
@@ -115,46 +114,22 @@ notes. Names inside verbatim quotes remain unchanged. Unknown ownership and
 missing dates do not generate repetitive labels; a task without an owner stays a
 plain `TODO`, and a quote without a supported speaker has no attribution suffix.
 
-## Validation and remaining uncertainty
+## Implementation and validation limits
 
-Structural checks cover profile parsing, bare-flag compatibility on either side
-of the audio path, topic nesting, exact evidence and quotes, participant IDs,
-protected-entry coverage, duplicate/invalid IDs, organizer repair, and transcription
-recovery. Prior transcript context is explicitly separate from the new region;
-its points cannot be extracted a second time merely because of overlap.
+Offline checks cover transcription recovery and reuse, two-hour audio chunking,
+large uploads, one notes call containing the complete transcript, absence of
+output-token caps, profile parsing and bare-flag compatibility, direct Markdown
+output, and retaining existing notes on provider failure.
 
-A named attribution is downgraded to unknown when its evidence does not mention
-that roster name. This catches unsupported assignment of anonymous "I" statements.
-Unsupported person references inside task or other paraphrased entry text are
-also rejected, so demoting an owner cannot leave an invented name in the task.
-These lexical checks cannot prove the semantic relationship between a mentioned name and an action:
-that still depends on the model and review. Similarly, checking an exact evidence
-span does not prove that a paraphrase follows from it. Coverage validation proves
-that extracted entries survived organization, not that extraction found every
-important statement in the recording.
+The prompt is the interface to the summarization model. It asks for faithful
+quotes, explicit ownership only, complete action coverage and topic grouping.
+The tool does not claim to verify these semantic properties mechanically. It
+checks whether the API completed normally and returned nonempty content before
+atomically replacing notes. A provider output/context limit can still prevent a
+successful response; STT imposes no smaller token budget.
 
-The synthetic fixture in `tests/fixtures/stt_meeting.txt` includes recurring launch
-and support topics, a changed decision, a revised amount, six actions, an anonymous
-commitment, deadlines, rationale, and exact quotes. Live profile evaluation uses
-only this synthetic text, never private meeting audio. Results and limitations
-should be reported separately from the industry source study.
-
-### Observed live check
-
-Using the requested `anthropic/claude-haiku-5.5` through OpenRouter, the final
-synthetic run produced 300 words for short, 328 for middle, and 350 for long. Each
-profile contained all six explicit actions, preserved the final 25 October launch
-date and revised $650 budget, and left the anonymous support commitment without a
-named owner. Both extracted quotes matched the fixture. The same inventory was
-used across profiles to isolate organization and depth changes.
-
-An earlier live run produced nearly identical lengths across profiles despite
-preserving actions. That observation led to validated optional-detail budgets,
-rather than relying on a vague request to be shorter. These budgets limit only
-optional discussion, never protected facts, actions, decisions, quotes or questions.
-Word counts depend on content and topic titles; the ratios are not word targets.
-
-The [middle-profile sample](stt-example-middle.md) is actual output from the
-synthetic fixture. It illustrates the current behavior, not a private meeting.
-These small checks do not establish general extraction accuracy or guarantee
-exhaustive recall on noisy, multilingual, or ambiguous real recordings.
+`tests/fixtures/stt_meeting.txt` contains recurring topics, revised facts, explicit
+and anonymous actions, deadlines, rationale and quotes. The
+[middle-profile example](stt-example-middle.md) illustrates the intended topic
+layout using that synthetic source; it is not a private meeting or a benchmark
+of model accuracy.

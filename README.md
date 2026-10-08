@@ -126,9 +126,9 @@ hints the transcription language; otherwise detection is automatic.
 - `middle`: important rationale, constraints, tradeoffs, and dependencies (default for bare `--summarize`).
 - `long`: all extracted substantive discussion, including alternatives and disagreements.
 
-Every profile retains all extracted actions, decisions, important facts/dates,
+Every profile asks for all action items, important decisions, facts/dates,
 quotes, and open questions. Short is not a hard word limit: dense meetings still
-need space. STT does not set an output-token cap on either notes API pass;
+need space. STT sends the complete transcript in one notes request and sets no output-token cap;
 provider/model limits still apply, and any abnormal stop reports its actual reason. Change profiles without `--force` to reuse transcription.
 
 ```text
@@ -142,13 +142,14 @@ provider/model limits still apply, and any abnormal stop reports its actual reas
   - Open question: Who covers support during the weekend?
 ```
 
-Long transcripts are extracted in bounded text sections; previous text supplies
-context only. A second pass merges recurring topics and selects existing entries
-by ID. Validation prevents it from dropping protected entries or inventing body
-bullets. Exact duplicate inventory entries are removed. Important quotes and
-source evidence must match the transcript. These checks do not prove factual
-entailment, perfect topic grouping, or complete extraction recall; review critical
-details against the retained transcript and audio.
+Summarization is one model call that returns plain topic-based LogSeq notes.
+There is no JSON intermediate format, evidence-copy validation, inventory ID system,
+second organizing pass, or numerical discussion budget. The model follows the
+readable prompt directly; review critical facts, quotes and attribution against
+the transcript. Existing notes are replaced atomically only after a successful,
+nonempty response. A failed notes request leaves the transcript and previous
+notes available for reuse. Avoid `--force` when only regenerating notes: that flag
+explicitly discards the saved transcription and transcribes again.
 
 The reusable runtime instructions live in
 [stt_notes.md](my_small_tools/stt_notes.md). The
