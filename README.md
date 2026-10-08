@@ -1,4 +1,29 @@
 # My small tools
+
+## Copy to an SSH target
+
+```bash
+scopy set-target netcup-dev
+scopy send ./report.pdf
+scopy send ./photos
+# From the checkout, prefix these commands with `uv run`.
+```
+
+`scopy` saves the target in `~/.config/my_small_tools/scopy-target` on macOS/Linux
+(the platform config directory on Windows). Targets can be SSH aliases or
+`user@host`; authentication and port settings use your usual SSH configuration.
+Setting the target saves it without connecting.
+
+Files and folders go into the target's `~/Downloads`, which is created if needed.
+Existing names are preserved: repeated sends create `report_1.pdf`, `report_2.pdf`
+or `photos_1`, `photos_2`. File indices go before the final extension, and folders
+keep their full names. Folders include hidden files, empty directories, and symlinks.
+The full destination appears before copying. A live progress display shows bytes,
+transfer speed, and elapsed time; files also show percentage and estimated time left.
+Folders show streaming progress without a fixed total (bytes include archive metadata).
+Requires local `ssh`, a POSIX shell on the target, and remote `tar` for folders.
+A failed transfer reports its destination; an incomplete copy can remain there.
+
 ## Knowledge Base Sync Tool
 
 A simple tool to automatically sync multiple git-based (knowledge base) repositories.
