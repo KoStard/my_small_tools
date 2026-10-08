@@ -206,6 +206,60 @@ class ScopyTests(unittest.TestCase):
             self.assertIn("ControlMaster=auto", arguments)
             self.assertIn("ControlPersist=60", arguments)
 
+    def test_multiple_sends_mix_files_folders_and_repeated_paths(self):
+        self.configure()
+        file = self.root / "file.txt"
+        file.write_text("payload")
+        folder = self.root / "folder"
+        folder.mkdir()
+        (folder / "nested.txt").write_text("nested")
+        result = self.invoke(["send", str(file), str(folder), str(file)])
+        self.assertEqual(result.exit_code, 0, result.output)
+        downloads = self.remote / "Downloads"
+        self.assertEqual((downloads / "file.txt").read_text(), "payload")
+        self.assertEqual((downloads / "file_1.txt").read_text(), "payload")
+        self.assertEqual((downloads / "folder" / "nested.txt").read_text(), "nested")
+        self.assertIn("[3/3] Sending:", result.output)
+
+    def test_multiple_downloads_mix_files_folders_and_repeated_paths(self):
+        self.configure()
+        (self.remote / "file.txt").write_text("payload")
+        (self.remote / "folder").mkdir()
+        (self.remote / "folder" / "nested.txt").write_text("nested")
+        result = self.invoke(["download", "file.txt", "~/folder", "file.txt"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        downloads = self.local_home / "Downloads"
+        self.assertEqual((downloads / "file.txt").read_text(), "payload")
+        self.assertEqual((downloads / "file_1.txt").read_text(), "payload")
+        self.assertEqual((downloads / "folder" / "nested.txt").read_text(), "nested")
+        self.assertIn("[3/3] Downloading:", result.output)
+
+    def test_multi_send_continues_after_missing_source(self):
+        self.configure()
+        file = self.root / "file.txt"
+        file.write_text("payload")
+        result = self.invoke(["send", str(self.root / "missing"), str(file)])
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("1 transfer(s) failed", result.output)
+        self.assertIn("missing", result.output)
+        self.assertEqual((self.remote / "Downloads" / "file.txt").read_text(), "payload")
+
+    def test_multi_download_continues_and_summarizes_all_failures(self):
+        self.configure()
+        (self.remote / "file.txt").write_text("payload")
+        result = self.invoke(["download", "missing-one", "file.txt", "missing-two"])
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("2 transfer(s) failed", result.output)
+        self.assertIn("missing-one", result.output)
+        self.assertIn("missing-two", result.output)
+        self.assertEqual((self.local_home / "Downloads" / "file.txt").read_text(), "payload")
+
+    def test_send_and_download_require_at_least_one_path(self):
+        for command in ["send", "download"]:
+            result = self.invoke([command])
+            self.assertEqual(result.exit_code, 2)
+            self.assertIn("Missing argument", result.output)
+
 
 if __name__ == "__main__":
     unittest.main()

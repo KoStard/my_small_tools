@@ -23,8 +23,8 @@
 Use `uv run` from repo root.
 
 Registered entry points (`pyproject.toml`):
-- `uv run scopy set-target <ssh-target>` / `uv run scopy send <file-or-folder>`
-- `uv run scopy download <remote-path>`
+- `uv run scopy set-target <ssh-target>` / `uv run scopy send <file-or-folder>...`
+- `uv run scopy download <remote-path>...`
 - `uv run writing-forge ...`
 - `uv run sync-knowledge-base`
 - `uv run ls-time ...`

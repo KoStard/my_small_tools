@@ -8,6 +8,8 @@ scopy send ./report.pdf
 scopy send ./photos
 scopy download /var/log/example.log
 scopy download '~/photos'
+scopy send ./report.pdf ./photos ./notes.txt
+scopy download '~/report.pdf' '~/photos' /var/log/example.log
 # From the checkout, prefix these commands with `uv run`.
 ```
 
@@ -25,6 +27,10 @@ transfer speed, and elapsed time; files also show percentage and estimated time 
 Folders show streaming progress without a fixed total (bytes include archive metadata).
 Requires local `ssh`, a POSIX shell on the target, and remote `tar` for folders.
 A failed transfer reports its destination; an incomplete copy can remain there.
+Both `send` and `download` accept multiple paths, including a mix of files and
+folders. They process inputs in order, show the current item number, and keep
+going after individual failures. Any failures are summarized at the end and the
+command exits with a nonzero status. Each item keeps its own unique destination.
 
 `scopy download <remote-path>` uses the same saved target and puts the file or
 folder in your **local** `~/Downloads`, adding the same unique indices when needed.

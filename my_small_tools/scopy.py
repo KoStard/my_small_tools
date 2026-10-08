@@ -308,37 +308,49 @@ def set_target(target: str):
 
 
 @main.command()
-@click.argument("source", type=click.Path(exists=True, path_type=Path))
-def send(source: Path):
-    """Send a file or folder, adding _1, _2, etc. if its name already exists."""
-    # Normalize '.'/'..' while preserving the chosen name for symlinks.
-    source = Path(os.path.abspath(source.expanduser()))
-    if not source.name or not (source.is_file() or source.is_dir()):
-        raise click.ClickException("Source must be a regular file or a folder other than the filesystem root.")
+@click.argument("sources", nargs=-1, required=True, type=click.Path(path_type=Path))
+def send(sources: tuple[Path, ...]):
+    """Send one or more files/folders, adding _1, _2, etc. for existing names."""
     target = load_target()
-    try:
-        destination = copy_to_target(source, target)
-    except (OSError, subprocess.SubprocessError) as error:
-        raise click.ClickException(f"SSH copy failed: {error}") from error
-    click.echo(f"Copied to {target}:{destination}")
+    failures = []
+    for index, source in enumerate(sources, start=1):
+        if len(sources) > 1:
+            click.echo(f"[{index}/{len(sources)}] Sending: {source}")
+        try:
+            # Normalize '.'/'..' while preserving the chosen name for symlinks.
+            source = Path(os.path.abspath(source.expanduser()))
+            if not source.name or not (source.is_file() or source.is_dir()):
+                raise click.ClickException("Source must be an existing regular file or folder other than the filesystem root.")
+            destination = copy_to_target(source, target)
+            click.echo(f"Copied to {target}:{destination}")
+        except (click.ClickException, OSError, subprocess.SubprocessError) as error:
+            failures.append(f"{source}: {error}")
+    if failures:
+        raise click.ClickException(f"{len(failures)} transfer(s) failed:\n" + "\n".join(failures))
 
 
 @main.command()
-@click.argument("remote_path")
-def download(remote_path: str):
-    """Download a remote file or folder into local ~/Downloads with a unique name.
+@click.argument("remote_paths", nargs=-1, required=True)
+def download(remote_paths: tuple[str, ...]):
+    """Download one or more remote files/folders into local ~/Downloads.
 
     Relative paths start at the remote home directory. Quote paths beginning with
     '~/' to prevent your local shell from expanding them.
     """
-    if not remote_path:
-        raise click.ClickException("Remote path must not be empty.")
     target = load_target()
-    try:
-        destination = copy_from_target(remote_path, target)
-    except (OSError, subprocess.SubprocessError) as error:
-        raise click.ClickException(f"SSH download failed: {error}") from error
-    click.echo(f"Downloaded to {destination}")
+    failures = []
+    for index, remote_path in enumerate(remote_paths, start=1):
+        if len(remote_paths) > 1:
+            click.echo(f"[{index}/{len(remote_paths)}] Downloading: {remote_path}")
+        try:
+            if not remote_path:
+                raise click.ClickException("Remote path must not be empty.")
+            destination = copy_from_target(remote_path, target)
+            click.echo(f"Downloaded to {destination}")
+        except (click.ClickException, OSError, subprocess.SubprocessError) as error:
+            failures.append(f"{remote_path}: {error}")
+    if failures:
+        raise click.ClickException(f"{len(failures)} transfer(s) failed:\n" + "\n".join(failures))
 
 
 if __name__ == "__main__":
