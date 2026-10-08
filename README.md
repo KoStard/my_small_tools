@@ -86,16 +86,19 @@ Set `OPENROUTER_API_KEY` in the environment. Audio goes to
 
 By default, outputs live beside the recording in `<audio-stem>.stt/`:
 
-- `transcript.txt`: original-language transcription; long recordings have approximate five-minute start labels.
+- `transcript.txt`: original-language transcription; long recordings have approximate two-hour start labels.
 - `notes.md`: plain LogSeq nested bullets, with `TODO` action items, owners and deadlines, decisions, facts/dates, important verbatim quotes, discussion, and open questions. No wiki links.
 - `state.json`: audio fingerprint, settings, and completed transcription parts for recovery.
 
-Install `ffmpeg` and `ffprobe` for automatic conversion to mono MP3 and five-minute
+Install `ffmpeg` and `ffprobe` for automatic conversion to mono MP3 and two-hour
 chunks with a two-second overlap to reduce word loss at boundaries (including
 formats such as MP4). Without them, WAV/MP3/FLAC/M4A/OGG/WebM/AAC
 files under 25 MB upload directly; long recordings may hit OpenRouter's processing
 timeout. Overlaps can repeat a few words in the transcript; review important names,
 numbers, and quotations against the audio.
+Converted chunks larger than 25 MB use OpenRouter's base64 JSON upload instead of
+multipart, preserving audio quality. Existing five-minute checkpoints require
+`--force` or another output folder when rerunning with the new chunk size.
 
 Rerunning reuses the transcript, including manual corrections. Add `--summarize`
 later, or rerun it with better context/names, without retranscribing. Completed

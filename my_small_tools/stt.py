@@ -1,5 +1,6 @@
 """Resumable OpenRouter transcription and plain LogSeq meeting notes."""
 
+import base64
 import hashlib
 import json
 import math
@@ -17,8 +18,9 @@ from pydantic import BaseModel, ConfigDict, Field
 BASE_URL = "https://openrouter.ai/api/v1"
 TRANSCRIPTION_MODEL = "openai/whisper-large-v3-turbo"
 SUMMARY_MODEL = "anthropic/claude-haiku-5.5"
-CHUNK_SECONDS = 300
+CHUNK_SECONDS = 2 * 60 * 60
 OVERLAP_SECONDS = 2
+MAX_MULTIPART_BYTES = 25_000_000
 FORMATS = {"wav", "mp3", "flac", "m4a", "ogg", "webm", "aac"}
 
 
@@ -99,7 +101,7 @@ def audio_parts(source: Path, directory: Path):
     else:
         if source.suffix.lower().lstrip(".") not in FORMATS:
             raise click.ClickException("Install ffmpeg and ffprobe to decode this audio format.")
-        if source.stat().st_size > 25_000_000:
+        if source.stat().st_size > MAX_MULTIPART_BYTES:
             raise click.ClickException("Install ffmpeg and ffprobe to split audio larger than 25 MB.")
         click.echo("ffmpeg unavailable: uploading directly; long audio may time out.", err=True)
         yield 0, 1, 0, source
@@ -142,9 +144,17 @@ def transcribe(source: Path, output: Path, api_key: str, language: str | None,
             data = {"model": TRANSCRIPTION_MODEL, "response_format": "json"}
             if language:
                 data["language"] = language
-            with part.open("rb") as handle:
-                response = request("audio/transcriptions", api_key,
-                                   data=data, files={"file": (part.name, handle)})
+            if part.stat().st_size > MAX_MULTIPART_BYTES:
+                # Two-hour chunks can exceed OpenRouter's multipart upload cap.
+                data["input_audio"] = {
+                    "data": base64.b64encode(part.read_bytes()).decode("ascii"),
+                    "format": part.suffix.lower().lstrip("."),
+                }
+                response = request("audio/transcriptions", api_key, json=data)
+            else:
+                with part.open("rb") as handle:
+                    response = request("audio/transcriptions", api_key,
+                                       data=data, files={"file": (part.name, handle)})
             text = response.get("text")
             if not isinstance(text, str):
                 raise click.ClickException("Transcription response is missing text.")
@@ -278,7 +288,7 @@ def main(audio: Path, summarize: bool, output_dir: Path | None, speaker: tuple[s
     notes.md (nested bullets and TODOs, no wiki links). Reruns reuse the saved
     transcript, including manual corrections, and regenerate notes.
 
-    Install ffmpeg and ffprobe for automatic five-minute audio chunks and format
+    Install ffmpeg and ffprobe for automatic two-hour audio chunks and format
     conversion. Without them, supported files under 25 MB upload directly.
     Chunk labels mark approximate starts, not word or speaker timestamps.
     """

@@ -1,5 +1,6 @@
 """Offline checks: uv run python -m unittest discover -s tests -p 'test_stt.py'."""
 
+import base64
 import json
 import tempfile
 import unittest
@@ -26,7 +27,7 @@ class STTTests(unittest.TestCase):
 
     def parts(self, source, directory):
         yield 0, 2, 0, source
-        yield 1, 2, 300, source
+        yield 1, 2, stt.CHUNK_SECONDS, source
 
     def test_failed_second_part_resumes_without_repeating_first(self):
         with patch.object(stt, "audio_parts", self.parts), patch.object(stt, "request") as request:
@@ -39,7 +40,7 @@ class STTTests(unittest.TestCase):
             request.side_effect = [{"text": 'The budget is $500. "Ship it."'}]
             text = stt.transcribe(self.audio, self.output, "fake-key", None, False)
             self.assertEqual(request.call_count, 3)
-            self.assertIn("[00:05:00]", text)
+            self.assertIn("[02:00:00]", text)
             self.assertIn("$500", text)
             self.assertTrue(json.loads((self.output / "state.json").read_text())["complete"])
 
@@ -52,6 +53,29 @@ class STTTests(unittest.TestCase):
             self.audio.write_bytes(b"different-recording")
             with self.assertRaisesRegex(click.ClickException, "Recording or transcription settings changed"):
                 stt.transcribe(self.audio, self.output, "fake-key", None, False)
+
+    def test_large_parts_use_base64_json_upload(self):
+        with patch.object(stt, "audio_parts", self.parts), \
+             patch.object(stt, "MAX_MULTIPART_BYTES", 2), \
+             patch.object(stt, "request", return_value={"text": "Hello"}) as request:
+            stt.transcribe(self.audio, self.output, "fake-key", "en", False)
+            payload = request.call_args.kwargs["json"]
+            self.assertEqual(payload["model"], stt.TRANSCRIPTION_MODEL)
+            self.assertEqual(payload["language"], "en")
+            self.assertEqual(payload["input_audio"]["format"], "wav")
+            self.assertEqual(base64.b64decode(payload["input_audio"]["data"]), self.audio.read_bytes())
+
+    def test_audio_under_two_hours_has_one_part(self):
+        with patch.object(stt.shutil, "which", return_value="available"), \
+             patch.object(stt, "run_media", return_value="7199"):
+            parts = list(stt.audio_parts(self.audio, self.root))
+            self.assertEqual(len(parts), 1)
+            self.assertEqual(parts[0][:3], (0, 1, 0))
+        with patch.object(stt.shutil, "which", return_value="available"), \
+             patch.object(stt, "run_media", return_value="7201"):
+            parts = list(stt.audio_parts(self.audio, self.root))
+            self.assertEqual(len(parts), 2)
+            self.assertEqual(parts[1][:3], (1, 2, 7200))
 
     def test_render_logseq_and_single_name_key(self):
         note = stt.Notes(
