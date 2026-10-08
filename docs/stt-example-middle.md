@@ -1,0 +1,30 @@
+- People
+  - P1: Ruben
+  - P2: Alice
+- Meeting date: 2026-10-08
+- October launch and staged rollout
+  - Decision: Rejected the 18 October 2026 launch date because billing migration is still unfinished.
+  - Decision: Launch on 25 October 2026 as a staged rollout: 10 percent of customers on day one, and all remaining customers only after the billing checks pass.
+  - The smaller staged rollout reduces rollback risk but also delays revenue.
+  - TODO P1: Send the migration checklist. — due: Friday, 16 October
+  - TODO P2: Verify the billing tests. — due: 20 October
+  - TODO P2: Notify customers after billing checks pass.
+  - "We cannot ship until billing is stable." — P1
+  - Decision: Launching everyone at once was considered and rejected because rollback would affect all customers.
+- Billing test budget
+  - The current test budget is $500.
+  - The test budget was revised from $500 to $650 because an extra billing scenario needs coverage.
+  - Decision: The $650 test budget replaces the earlier $500 budget.
+- Support handover and weekend coverage
+  - Decision: Keep the old escalation channel open until 30 October.
+  - Keeping the old channel creates some duplicate work, but the team preferred that to losing urgent customer messages.
+  - TODO P2: Draft the support handover guide, including how to roll back. — due: 22 October
+  - The handover guide must explain how to roll back, and it depends on the migration checklist.
+  - The support team has only two people on weekends.
+  - Open question: Who will cover support during the weekend?
+  - TODO Ask support about weekend coverage. No one identifies the participant who said this.
+  - "We need a named backup before the first customer moves." — P2
+- Launch date and rollout review
+  - The launch date remains 25 October 2026.
+  - TODO P1: Book the rollout review. — due: 23 October 2026
+  - Open question: Can the extra billing scenario be tested without another staging environment?

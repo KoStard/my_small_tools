@@ -75,7 +75,9 @@ When `git pull --rebase` stops on conflicts, the tool now inspects the conflicte
 
 ```bash
 uv run stt meeting.m4a
-uv run stt meeting.m4a --summarize
+uv run stt meeting.m4a --summarize middle
+uv run stt meeting.m4a --summarize short
+uv run stt meeting.m4a --summarize long
 uv run stt meeting.m4a --summarize --speaker Ruben --speaker Alice \
   --meeting-date 2026-10-08 --context "Weekly product review" -o ./meeting-notes
 ```
@@ -87,7 +89,7 @@ Set `OPENROUTER_API_KEY` in the environment. Audio goes to
 By default, outputs live beside the recording in `<audio-stem>.stt/`:
 
 - `transcript.txt`: original-language transcription; long recordings have approximate two-hour start labels.
-- `notes.md`: plain LogSeq nested bullets, with `TODO` action items, owners and deadlines, decisions, facts/dates, important verbatim quotes, discussion, and open questions. No wiki links.
+- `notes.md`: plain LogSeq topic bullets. Each topic contains its relevant discussion, decisions, facts/dates, quotes, questions, and `TODO` action items. No global action/fact/quote buckets or wiki links.
 - `state.json`: audio fingerprint, settings, and completed transcription parts for recovery.
 
 Install `ffmpeg` and `ffprobe` for automatic conversion to mono MP3 and two-hour
@@ -97,8 +99,9 @@ files under 25 MB upload directly; long recordings may hit OpenRouter's processi
 timeout. Overlaps can repeat a few words in the transcript; review important names,
 numbers, and quotations against the audio.
 Converted chunks larger than 25 MB use OpenRouter's base64 JSON upload instead of
-multipart, preserving audio quality. Existing five-minute checkpoints require
-`--force` or another output folder when rerunning with the new chunk size.
+multipart, preserving audio quality. Completed transcripts from the earlier
+five-minute version are reused. Unfinished checkpoints with different chunk
+settings require `--force` or another output folder.
 
 Rerunning reuses the transcript, including manual corrections. Add `--summarize`
 later, or rerun it with better context/names, without retranscribing. Completed
@@ -110,15 +113,44 @@ successful `--summarize` run; copy hand-edited notes elsewhere before regenerati
 Names appear in one participant key, with `P1`, `P2`, etc. used elsewhere (except
 inside verbatim quotes). `--speaker` supplies names in key order; it does **not**
 identify voices. Without names, the key has two editable placeholders. Whisper
-has no diarization here: unknown owners/speakers stay `unknown`, and identities
-are used only when explicitly supported by the transcript. Editing the key cannot
-resolve unknown attribution. Missing dates stay “not stated”; relative dates stay
+has no diarization here: unknown owners/speakers are left unspecified in the
+rendered notes. Named attribution needs explicit transcript evidence mentioning
+that person; a roster alone cannot identify voices. Editing the key cannot
+resolve unknown attribution. Missing deadlines are omitted; relative dates stay
 relative unless you provide the actual `--meeting-date`. `--language en` optionally
 hints the transcription language; otherwise detection is automatic.
 
-Long transcripts are extracted in bounded sections and combined without a second
-lossy summary. Exact duplicate notes are removed, but related bullets may repeat
-and references across section boundaries may be unclear. Notes remain AI-generated:
-retaining the complete transcript lets you verify important details. Important
-quotes must match the transcript to be accepted. This verifies transcription text,
-not the original audio.
+`--summarize short|middle|long` controls explanatory depth:
+
+- `short`: compact context and essential discussion.
+- `middle`: important rationale, constraints, tradeoffs, and dependencies (default for bare `--summarize`).
+- `long`: all extracted substantive discussion, including alternatives and disagreements.
+
+Every profile retains all extracted actions, decisions, important facts/dates,
+quotes, and open questions. Short is not a hard word limit: dense meetings still
+need space. Change profiles without `--force` to reuse transcription.
+
+```text
+- October launch
+  - The staged rollout reduces billing rollback risk.
+  - Decision: Start with 10 percent of customers on 25 October.
+  - TODO P1: Send the migration checklist — due: Friday
+  - "We cannot ship until billing is stable." — P1
+- Support handover
+  - TODO P2: Draft the handover guide — due: 22 October
+  - Open question: Who covers support during the weekend?
+```
+
+Long transcripts are extracted in bounded text sections; previous text supplies
+context only. A second pass merges recurring topics and selects existing entries
+by ID. Validation prevents it from dropping protected entries or inventing body
+bullets. Exact duplicate inventory entries are removed. Important quotes and
+source evidence must match the transcript. These checks do not prove factual
+entailment, perfect topic grouping, or complete extraction recall; review critical
+details against the retained transcript and audio.
+
+The reusable runtime instructions live in
+[stt_notes.md](my_small_tools/stt_notes.md). The
+[industry and skill source study](docs/stt-meeting-notes-research.md) explains the
+chosen structure, evaluated skills, and validation limits. No external skill or
+connector installation is required.
