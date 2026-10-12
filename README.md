@@ -39,6 +39,12 @@ local shell does not expand it. Downloads show both the source and destination,
 with the same live progress display. Folder downloads use safe tar extraction;
 symlinks pointing outside the downloaded folder are rejected.
 
+Downloads run over several SSH connections at once (`-j/--streams`, default 8):
+large files are fetched in 8 MiB pieces and small files in tar batches. A single
+TCP connection slows to a crawl on a lossy or per-connection-throttled link, so
+this is typically several times faster there. Folders need GNU `find` and `tar`
+on the target for this; otherwise they fall back to one tar stream.
+
 Transfers stream directly through OpenSSH with 1 MiB buffers. Folders use an
 uncompressed tar stream with no intermediate archive. SSH compression is disabled
 to avoid CPU overhead on fast links. On Unix, authenticated SSH connections are
