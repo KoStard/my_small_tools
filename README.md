@@ -45,6 +45,58 @@ TCP connection slows to a crawl on a lossy or per-connection-throttled link, so
 this is typically several times faster there. Folders need GNU `find` and `tar`
 on the target for this; otherwise they fall back to one tar stream.
 
+### Troubleshooting slow or throttled transfers
+
+**1. Is one stream slow but several fast?** Compare one SSH stream against four:
+
+```bash
+time ssh netcup-dev 'head -c 8M /dev/urandom' > /dev/null
+time (for i in 1 2 3 4; do ssh netcup-dev 'head -c 8M /dev/urandom' > /dev/null & done; wait)
+```
+
+If both take about the same time, a single connection is the bottleneck (packet
+loss or per-connection throttling) and more streams help: `scopy download -j 16 ...`.
+If four streams take about four times longer, the link itself is saturated and
+extra streams will not help.
+
+**2. Is the local link dropping packets?** Loss or large latency spikes here
+explain a slow single stream:
+
+```bash
+ping -c 30 -i 0.2 -q 1.1.1.1
+```
+
+**3. Is sshd rejecting parallel connections?** The symptom is
+`kex_exchange_identification: read: Connection reset by peer` or
+`Connection reset by <host> port 22` when many connections start at once. sshd
+drops new connections while more than `MaxStartups` (default `10:30:100`) are
+still authenticating. `scopy` opens at most 4 at a time and retries, so it
+should stay under the default; other parallel tools may not. Check the limit and
+the server log:
+
+```bash
+ssh -t netcup-dev "sudo sshd -T | grep -i maxstartups; sudo journalctl -u ssh --since '10 min ago' | grep -iE 'MaxStartups|drop'"
+```
+
+Raise it (the service is `sshd` instead of `ssh` on non-Debian distros):
+
+```bash
+ssh -t netcup-dev "echo 'MaxStartups 100:30:200' | sudo tee /etc/ssh/sshd_config.d/50-maxstartups.conf && sudo sshd -t && sudo systemctl reload ssh"
+```
+
+**4. Make single streams tolerate loss.** The server's default congestion
+control (CUBIC) backs off hard on packet loss; BBR does not. Check, switch, and
+persist across reboots:
+
+```bash
+ssh netcup-dev "cat /proc/sys/net/ipv4/tcp_congestion_control"
+ssh -t netcup-dev "sudo modprobe tcp_bbr && sudo sysctl -w net.ipv4.tcp_congestion_control=bbr"
+ssh -t netcup-dev "echo tcp_bbr | sudo tee /etc/modules-load.d/bbr.conf && echo 'net.ipv4.tcp_congestion_control=bbr' | sudo tee /etc/sysctl.d/99-bbr.conf"
+```
+
+This speeds up downloads from the server (it is the sender); uploads depend on
+the local machine's congestion control.
+
 Transfers stream directly through OpenSSH with 1 MiB buffers. Folders use an
 uncompressed tar stream with no intermediate archive. SSH compression is disabled
 to avoid CPU overhead on fast links. On Unix, authenticated SSH connections are
