@@ -1,5 +1,6 @@
 """Send and download files/folders over SSH with unique names and progress."""
 
+import asyncio
 import os
 import shlex
 import shutil
@@ -26,6 +27,8 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 from rich.text import Text
+
+from my_small_tools.scopy_tunnel import run_pool
 
 BUFFER_SIZE = 1024 * 1024
 # One TCP connection is throttled hard by packet loss, so downloads are split
@@ -511,12 +514,18 @@ def set_target(target: str):
 @main.command()
 @click.argument("local_port", type=click.IntRange(1, 65535))
 @click.argument("remote_port", required=False, type=click.IntRange(1, 65535))
-def tunnel(local_port: int, remote_port: int | None):
+@click.option("-j", "--streams", type=click.IntRange(1, 16), default=1, show_default=True,
+              help="Independent SSH connections to balance browser connections over.")
+def tunnel(local_port: int, remote_port: int | None, streams: int):
     """Forward LOCAL_PORT to REMOTE_PORT on the saved SSH target.
 
     With one port, use the same port locally and remotely. The local listener
     and remote destination both use 127.0.0.1. Keep this command running to keep
     the tunnel open; press Ctrl+C to close it.
+
+    Use -j 4 for a pool on lossy or per-connection throttled links. Each browser
+    TCP connection stays on one SSH transport; a single HTTP/2 connection or
+    download cannot be split across transports. No remote installation required.
     """
     target = load_target()
     if shutil.which("ssh") is None:
@@ -538,8 +547,23 @@ def tunnel(local_port: int, remote_port: int | None):
     url = f"http://127.0.0.1:{local_port}"
     browser_link = Text("  Open in browser: ")
     browser_link.append(url, style=f"bold underline cyan link {url}")
-    console.print(browser_link, soft_wrap=True)
+    if streams == 1:
+        console.print(browser_link, soft_wrap=True)
     click.echo("Keep this command running. Press Ctrl+C to close the tunnel.")
+    if streams > 1:
+        def pool_command(port):
+            arguments = command.copy()
+            arguments[arguments.index("-L") + 1] = f"127.0.0.1:{port}:127.0.0.1:{remote_port}"
+            return arguments
+
+        try:
+            asyncio.run(run_pool(local_port, streams, pool_command,
+                                 ready=lambda: console.print(browser_link, soft_wrap=True)))
+        except KeyboardInterrupt:
+            click.echo("\nTunnel closed.")
+        except OSError as error:
+            raise click.ClickException(f"Cannot open SSH tunnel pool: {error}") from error
+        return
     try:
         with subprocess.Popen(command) as process:
             try:

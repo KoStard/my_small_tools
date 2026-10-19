@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from click.testing import CliRunner
 
@@ -87,6 +87,25 @@ class ScopyTests(unittest.TestCase):
                 result, popen = self.invoke_tunnel(ports, MagicMock())
                 self.assertEqual(result.exit_code, 2, result.output)
                 popen.assert_not_called()
+
+    def test_tunnel_pool_uses_independent_loopback_forwards(self):
+        self.configure()
+        with patch.object(scopy, "config_path", return_value=self.config), \
+                patch.object(scopy.shutil, "which", return_value="/usr/bin/ssh"), \
+                patch.object(scopy, "run_pool", new_callable=AsyncMock) as pool:
+            result = self.runner.invoke(scopy.main, ["tunnel", "-j", "4", "8080", "8000"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        local, streams, command = pool.call_args.args
+        self.assertEqual((local, streams), (8080, 4))
+        for port in [12345, 12346]:
+            arguments = command(port)
+            self.assertEqual(arguments[arguments.index("-L") + 1],
+                             f"127.0.0.1:{port}:127.0.0.1:8000")
+            self.assertIn("ControlPath=none", arguments)
+            self.assertEqual(arguments[-1], "test-host")
+        for streams in ["0", "17"]:
+            result = self.runner.invoke(scopy.main, ["tunnel", "-j", streams, "8080"])
+            self.assertEqual(result.exit_code, 2)
 
     def test_tunnel_requires_configured_target(self):
         result, popen = self.invoke_tunnel(["8000"], MagicMock())

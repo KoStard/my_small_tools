@@ -12,6 +12,7 @@ scopy send ./report.pdf ./photos ./notes.txt
 scopy download '~/report.pdf' '~/photos' /var/log/example.log
 scopy tunnel 8000       # localhost:8000 -> saved target's localhost:8000
 scopy tunnel 8080 8000  # localhost:8080 -> saved target's localhost:8000
+scopy tunnel -j 4 8080 8000  # balance browser connections over four SSH transports
 # From the checkout, prefix these commands with `uv run`.
 ```
 
@@ -29,6 +30,20 @@ press Ctrl+C to close it. SSH reports binding/authentication errors and exits if
 the tunnel cannot be established. Tunnels use their own SSH connection, so closing
 one leaves file transfers running. Authentication and SSH aliases use your normal
 SSH configuration.
+
+For heavy pages on lossy or per-connection throttled links, try
+`scopy tunnel -j 4 LOCAL_PORT [REMOTE_PORT]`. This creates independent SSH
+connections and a local TCP relay that assigns each new browser connection to the
+transport with the fewest open connections. The clickable URL appears once the
+pool is ready. No remote installation is needed; Ctrl+C stops the relay and every
+SSH process it owns. The default remains one direct SSH tunnel.
+
+This can improve pages that fetch assets over multiple browser TCP connections.
+It cannot split one HTTP/2 connection, WebSocket, or large response across
+transports, and it cannot fix slow application rendering or server processing.
+TLS, HTTP cookies, and WebSocket traffic pass through unchanged. The relay does
+not parse, cache, rewrite, or replay application requests. Speed gains depend on
+the actual bottleneck; compare `-j 1` and `-j 4` with browser caching disabled.
 
 Files and folders go into the target's `~/Downloads`, which is created if needed.
 Existing names are preserved: repeated sends create `report_1.pdf`, `report_2.pdf`
