@@ -22,8 +22,9 @@ Setting the target saves it without connecting.
 
 `scopy tunnel PORT` forwards the same port locally and remotely;
 `scopy tunnel LOCAL_PORT REMOTE_PORT` uses different ports. Open
-`http://127.0.0.1:LOCAL_PORT` to access an HTTP service on the target. Both ends use
-`127.0.0.1`; the listener is local to your computer. Keep the command running and
+`http://127.0.0.1:LOCAL_PORT` to access an HTTP service on the target. The command
+prints this local URL as a highlighted terminal hyperlink for Cmd+click. Both ends
+use `127.0.0.1`; the listener is local to your computer. Keep the command running and
 press Ctrl+C to close it. SSH reports binding/authentication errors and exits if
 the tunnel cannot be established. Tunnels use their own SSH connection, so closing
 one leaves file transfers running. Authentication and SSH aliases use your normal

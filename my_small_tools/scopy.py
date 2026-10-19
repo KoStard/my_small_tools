@@ -530,10 +530,15 @@ def tunnel(local_port: int, remote_port: int | None):
         "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3",
         "-L", forwarding, target,
     ]
-    Console().print(Text(
+    console = Console()
+    console.print(Text(
         f"Opening tunnel: 127.0.0.1:{local_port} → {target}:127.0.0.1:{remote_port}",
         style="bold cyan",
     ))
+    url = f"http://127.0.0.1:{local_port}"
+    browser_link = Text("  Open in browser: ")
+    browser_link.append(url, style=f"bold underline cyan link {url}")
+    console.print(browser_link, soft_wrap=True)
     click.echo("Keep this command running. Press Ctrl+C to close the tunnel.")
     try:
         with subprocess.Popen(command) as process:

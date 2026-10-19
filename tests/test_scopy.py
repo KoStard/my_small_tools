@@ -78,6 +78,7 @@ class ScopyTests(unittest.TestCase):
                 self.assertIn("ControlPath=none", command)
                 self.assertIn("ForkAfterAuthentication=no", command)
                 self.assertIn("test-host:127.0.0.1:8000", result.output)
+                self.assertIn(f"Open in browser: http://127.0.0.1:{ports[0]}", result.output)
                 self.assertIn("Ctrl+C", result.output)
 
     def test_tunnel_rejects_missing_or_invalid_ports(self):
