@@ -487,7 +487,7 @@ def copy_to_target(source: Path, target: str) -> str:
 
 @click.group()
 def main():
-    """Send or download files/folders using a saved SSH target.
+    """Transfer files or open a local SSH tunnel using a saved target.
 
     Requires local ssh and a POSIX shell on the target; folders require remote tar.
     SSH aliases, authentication, and ports come from your usual SSH configuration.
@@ -506,6 +506,53 @@ def set_target(target: str):
     except OSError as error:
         raise click.ClickException(f"Cannot save SSH target: {error}") from error
     click.echo(f"Target set to {target}")
+
+
+@main.command()
+@click.argument("local_port", type=click.IntRange(1, 65535))
+@click.argument("remote_port", required=False, type=click.IntRange(1, 65535))
+def tunnel(local_port: int, remote_port: int | None):
+    """Forward LOCAL_PORT to REMOTE_PORT on the saved SSH target.
+
+    With one port, use the same port locally and remotely. The local listener
+    and remote destination both use 127.0.0.1. Keep this command running to keep
+    the tunnel open; press Ctrl+C to close it.
+    """
+    target = load_target()
+    if shutil.which("ssh") is None:
+        raise click.ClickException("ssh is required and must be available in PATH.")
+    remote_port = remote_port if remote_port is not None else local_port
+    forwarding = f"127.0.0.1:{local_port}:127.0.0.1:{remote_port}"
+    # Own the connection so Ctrl+C removes this tunnel without affecting transfers.
+    command = [
+        "ssh", "-N", "-T", "-o", "ControlMaster=no", "-o", "ControlPath=none",
+        "-o", "ForkAfterAuthentication=no", "-o", "ExitOnForwardFailure=yes",
+        "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3",
+        "-L", forwarding, target,
+    ]
+    Console().print(Text(
+        f"Opening tunnel: 127.0.0.1:{local_port} → {target}:127.0.0.1:{remote_port}",
+        style="bold cyan",
+    ))
+    click.echo("Keep this command running. Press Ctrl+C to close the tunnel.")
+    try:
+        with subprocess.Popen(command) as process:
+            try:
+                returncode = process.wait()
+            except KeyboardInterrupt:
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                click.echo("\nTunnel closed.")
+                return
+            if returncode:
+                raise click.ClickException(f"SSH tunnel failed (exit status {returncode}).")
+    except OSError as error:
+        raise click.ClickException(f"Cannot start SSH tunnel: {error}") from error
 
 
 @main.command()

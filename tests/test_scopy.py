@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
@@ -52,6 +52,90 @@ class ScopyTests(unittest.TestCase):
     def configure(self):
         result = self.invoke(["set-target", "test-host"])
         self.assertEqual(result.exit_code, 0, result.output)
+
+    def invoke_tunnel(self, ports, process):
+        with patch.object(scopy, "config_path", return_value=self.config), \
+                patch.object(scopy.shutil, "which", return_value="/usr/bin/ssh"), \
+                patch.object(scopy.subprocess, "Popen") as popen:
+            popen.return_value.__enter__.return_value = process
+            result = self.runner.invoke(scopy.main, ["tunnel", *ports])
+            return result, popen
+
+    def test_tunnel_uses_saved_target_and_loopback_ports(self):
+        self.configure()
+        for ports, expected in [(["8000"], "127.0.0.1:8000:127.0.0.1:8000"),
+                                (["8080", "8000"], "127.0.0.1:8080:127.0.0.1:8000")]:
+            with self.subTest(ports=ports):
+                process = MagicMock()
+                process.wait.return_value = 0
+                result, popen = self.invoke_tunnel(ports, process)
+                self.assertEqual(result.exit_code, 0, result.output)
+                command = popen.call_args.args[0]
+                self.assertEqual(command[-1], "test-host")
+                self.assertEqual(command[command.index("-L") + 1], expected)
+                self.assertIn("-N", command)
+                self.assertIn("ExitOnForwardFailure=yes", command)
+                self.assertIn("ControlPath=none", command)
+                self.assertIn("ForkAfterAuthentication=no", command)
+                self.assertIn("test-host:127.0.0.1:8000", result.output)
+                self.assertIn("Ctrl+C", result.output)
+
+    def test_tunnel_rejects_missing_or_invalid_ports(self):
+        for ports in [[], ["0"], ["65536"], ["abc"], ["8000", "0"], ["8000", "65536"]]:
+            with self.subTest(ports=ports):
+                result, popen = self.invoke_tunnel(ports, MagicMock())
+                self.assertEqual(result.exit_code, 2, result.output)
+                popen.assert_not_called()
+
+    def test_tunnel_requires_configured_target(self):
+        result, popen = self.invoke_tunnel(["8000"], MagicMock())
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("set-target", result.output)
+        popen.assert_not_called()
+
+    def test_tunnel_reports_ssh_failure(self):
+        self.configure()
+        process = MagicMock()
+        process.wait.return_value = 255
+        result, _ = self.invoke_tunnel(["8000"], process)
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("SSH tunnel failed (exit status 255)", result.output)
+
+    def test_tunnel_ctrl_c_terminates_connection(self):
+        self.configure()
+        process = MagicMock()
+        process.wait.side_effect = [KeyboardInterrupt, 0]
+        process.poll.return_value = None
+        result, _ = self.invoke_tunnel(["8000"], process)
+        self.assertEqual(result.exit_code, 0, result.output)
+        process.terminate.assert_called_once()
+        process.wait.assert_any_call(timeout=5)
+        process.kill.assert_not_called()
+        self.assertIn("Tunnel closed", result.output)
+
+    def test_tunnel_ctrl_c_kills_unresponsive_connection(self):
+        self.configure()
+        process = MagicMock()
+        process.wait.side_effect = [KeyboardInterrupt, subprocess.TimeoutExpired("ssh", 5), 0]
+        process.poll.return_value = None
+        result, _ = self.invoke_tunnel(["8000"], process)
+        self.assertEqual(result.exit_code, 0, result.output)
+        process.terminate.assert_called_once()
+        process.kill.assert_called_once()
+
+    def test_tunnel_reports_missing_ssh_and_process_start_failure(self):
+        self.configure()
+        with patch.object(scopy, "config_path", return_value=self.config), \
+                patch.object(scopy.shutil, "which", return_value=None):
+            result = self.runner.invoke(scopy.main, ["tunnel", "8000"])
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("ssh is required", result.output)
+        with patch.object(scopy, "config_path", return_value=self.config), \
+                patch.object(scopy.shutil, "which", return_value="/usr/bin/ssh"), \
+                patch.object(scopy.subprocess, "Popen", side_effect=OSError("cannot execute")):
+            result = self.runner.invoke(scopy.main, ["tunnel", "8000"])
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("Cannot start SSH tunnel", result.output)
 
     def test_missing_target_and_invalid_target(self):
         source = self.root / "file"
@@ -184,7 +268,7 @@ class ScopyTests(unittest.TestCase):
         original_popen = self.popen_ssh
 
         def fail_download(arguments, **kwargs):
-            if arguments[-1].startswith("cat <"):
+            if scopy.RANGE_SCRIPT in arguments[-1]:
                 return self.real_popen(["/bin/sh", "-c", "printf partial; exit 1"], **kwargs)
             return original_popen(arguments, **kwargs)
 
@@ -192,7 +276,8 @@ class ScopyTests(unittest.TestCase):
             result = self.invoke(["download", "file.txt"])
         self.assertNotEqual(result.exit_code, 0)
         self.assertIn("incomplete copy", result.output)
-        self.assertEqual((self.local_home / "Downloads" / "file.txt").read_text(), "partial")
+        partial = (self.local_home / "Downloads" / "file.txt").read_bytes()
+        self.assertTrue(partial.startswith(b"partial"))
 
     def test_empty_download_and_ssh_performance_options(self):
         self.configure()

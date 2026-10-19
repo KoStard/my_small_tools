@@ -10,6 +10,8 @@ scopy download /var/log/example.log
 scopy download '~/photos'
 scopy send ./report.pdf ./photos ./notes.txt
 scopy download '~/report.pdf' '~/photos' /var/log/example.log
+scopy tunnel 8000       # localhost:8000 -> saved target's localhost:8000
+scopy tunnel 8080 8000  # localhost:8080 -> saved target's localhost:8000
 # From the checkout, prefix these commands with `uv run`.
 ```
 
@@ -17,6 +19,15 @@ scopy download '~/report.pdf' '~/photos' /var/log/example.log
 (the platform config directory on Windows). Targets can be SSH aliases or
 `user@host`; authentication and port settings use your usual SSH configuration.
 Setting the target saves it without connecting.
+
+`scopy tunnel PORT` forwards the same port locally and remotely;
+`scopy tunnel LOCAL_PORT REMOTE_PORT` uses different ports. Open
+`http://127.0.0.1:LOCAL_PORT` to access an HTTP service on the target. Both ends use
+`127.0.0.1`; the listener is local to your computer. Keep the command running and
+press Ctrl+C to close it. SSH reports binding/authentication errors and exits if
+the tunnel cannot be established. Tunnels use their own SSH connection, so closing
+one leaves file transfers running. Authentication and SSH aliases use your normal
+SSH configuration.
 
 Files and folders go into the target's `~/Downloads`, which is created if needed.
 Existing names are preserved: repeated sends create `report_1.pdf`, `report_2.pdf`
