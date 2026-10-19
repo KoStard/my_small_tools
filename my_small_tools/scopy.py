@@ -514,7 +514,7 @@ def set_target(target: str):
 @main.command()
 @click.argument("local_port", type=click.IntRange(1, 65535))
 @click.argument("remote_port", required=False, type=click.IntRange(1, 65535))
-@click.option("-j", "--streams", type=click.IntRange(1, 16), default=1, show_default=True,
+@click.option("-j", "--streams", type=click.IntRange(1, 16), default=4, show_default=True,
               help="Independent SSH connections to balance browser connections over.")
 def tunnel(local_port: int, remote_port: int | None, streams: int):
     """Forward LOCAL_PORT to REMOTE_PORT on the saved SSH target.
@@ -523,7 +523,7 @@ def tunnel(local_port: int, remote_port: int | None, streams: int):
     and remote destination both use 127.0.0.1. Keep this command running to keep
     the tunnel open; press Ctrl+C to close it.
 
-    Use -j 4 for a pool on lossy or per-connection throttled links. Each browser
+    Uses four SSH connections by default; -j 1 selects a direct tunnel. Each browser
     TCP connection stays on one SSH transport; a single HTTP/2 connection or
     download cannot be split across transports. No remote installation required.
     """

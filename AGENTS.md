@@ -25,7 +25,7 @@ Use `uv run` from repo root.
 Registered entry points (`pyproject.toml`):
 - `uv run scopy set-target <ssh-target>` / `uv run scopy send <file-or-folder>...`
 - `uv run scopy download [-j N] <remote-path>...`
-- `uv run scopy tunnel [-j N] <local-port> [remote-port]`: foreground SSH local forwarding using the saved target; `-j` balances browser TCP connections over independent SSH transports. Ctrl+C closes the tunnel/pool.
+- `uv run scopy tunnel [-j N] <local-port> [remote-port]`: foreground SSH local forwarding using the saved target; defaults to four independent SSH transports. `-j 1` selects a direct tunnel. Ctrl+C closes the tunnel/pool.
 - `uv run writing-forge ...`
 - `uv run sync-knowledge-base`
 - `uv run ls-time ...`

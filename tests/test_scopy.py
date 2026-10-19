@@ -58,7 +58,7 @@ class ScopyTests(unittest.TestCase):
                 patch.object(scopy.shutil, "which", return_value="/usr/bin/ssh"), \
                 patch.object(scopy.subprocess, "Popen") as popen:
             popen.return_value.__enter__.return_value = process
-            result = self.runner.invoke(scopy.main, ["tunnel", *ports])
+            result = self.runner.invoke(scopy.main, ["tunnel", "-j", "1", *ports])
             return result, popen
 
     def test_tunnel_uses_saved_target_and_loopback_ports(self):
@@ -93,7 +93,7 @@ class ScopyTests(unittest.TestCase):
         with patch.object(scopy, "config_path", return_value=self.config), \
                 patch.object(scopy.shutil, "which", return_value="/usr/bin/ssh"), \
                 patch.object(scopy, "run_pool", new_callable=AsyncMock) as pool:
-            result = self.runner.invoke(scopy.main, ["tunnel", "-j", "4", "8080", "8000"])
+            result = self.runner.invoke(scopy.main, ["tunnel", "8080", "8000"])
         self.assertEqual(result.exit_code, 0, result.output)
         local, streams, command = pool.call_args.args
         self.assertEqual((local, streams), (8080, 4))
@@ -153,7 +153,7 @@ class ScopyTests(unittest.TestCase):
         with patch.object(scopy, "config_path", return_value=self.config), \
                 patch.object(scopy.shutil, "which", return_value="/usr/bin/ssh"), \
                 patch.object(scopy.subprocess, "Popen", side_effect=OSError("cannot execute")):
-            result = self.runner.invoke(scopy.main, ["tunnel", "8000"])
+            result = self.runner.invoke(scopy.main, ["tunnel", "-j", "1", "8000"])
         self.assertNotEqual(result.exit_code, 0)
         self.assertIn("Cannot start SSH tunnel", result.output)
 
