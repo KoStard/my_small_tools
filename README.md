@@ -1,5 +1,46 @@
 # My small tools
 
+## Review a recorded conversation
+
+```bash
+uv run stt "/path/to/meeting.m4a" --review
+# Reuse an existing full-recording, speaker-labeled API response:
+uv run stt "/path/to/meeting.m4a" --review --transcript-json "/path/to/response.json"
+```
+
+The local page plays a sample of each voice so you can assign names. Each
+timestamped turn has playback, an editable transcript and a speaker selector.
+Place the text cursor at a voice change and choose **Split at cursor** to correct
+part of a turn; listen around the estimated split time and adjust it before
+splitting. Use **Undo** to reverse edits in the current tab. **Save changes**
+(Cmd/Ctrl+S) writes corrections locally; the page warns before leaving with
+unsaved changes. **Save & generate notes** uses the saved corrections and names
+to write the existing topic-based LogSeq format, with selectable detail, date
+and background. Notes are marked stale after further edits.
+
+Reviews are stored beside the recording in `<audio-stem>.review` (override with
+`-o`). Rerun the same command to reopen saved edits without retranscription.
+The folder contains original `provider.json`, source identity `recording.json`,
+editable `review.json`, readable `transcript.txt`, and generated `notes.md`.
+Imports must belong to the supplied recording with timestamps relative to its
+start; an import initializes a new review and never replaces existing edits.
+Speaker identifiers P1/P2 follow first appearance; names supplied by `--speaker`
+initialize that order in a new review and should be checked by listening.
+
+New reviews transcribe with Deepgram Nova-3 through OpenRouter using
+`OPENROUTER_API_KEY`; imports and saved reviews can open without a key. Generating
+notes also uses OpenRouter and incurs normal model charges. The browser receives
+no API credentials, and playback/editing stays on a loopback-only local server.
+The random local URL changes on each launch. Keep the command running; Ctrl+C
+closes it. Use `--no-open` to print the URL without opening a browser, or
+`--port N` to choose a port.
+
+Supported audio under 25 MB uploads directly. Install `ffmpeg` for conversion or
+compression of other files; compressed audio must still fit under 25 MB. Review
+does not split long recordings and equate independent speaker IDs. Browser audio
+support varies by format; MP3 and M4A are convenient for playback. The original
+plain `stt AUDIO [--summarize]` workflow continues to use Whisper.
+
 ## Copy to an SSH target
 
 ```bash

@@ -12,9 +12,10 @@ without an introduction, code fence, participant roster, or date header.
   their reasoning, rejected alternatives, disagreements, risks and open questions.
   Explain when a later decision replaces an earlier proposal.
 - Use the supplied P1/P2/etc. identifiers for people references. Names belong only
-  in the roster that the tool adds, except within direct quotes. The transcript
-  has no speaker diarization: a roster does not identify voices. Leave ownership
-  and attribution unspecified unless the transcript explicitly identifies them.
+  in the roster that the tool adds, except within direct quotes. Use explicit
+  speaker labels in a reviewed transcript for attribution. A roster alone does
+  not identify voices: leave ownership and attribution unspecified for unlabeled
+  passages unless the transcript explicitly identifies them.
 - Follow the transcript's language. Keep relative dates as stated unless the
   supplied meeting date resolves them unambiguously.
 - Length profiles change explanatory depth. Even short notes must retain all

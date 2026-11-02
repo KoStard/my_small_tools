@@ -10,6 +10,7 @@
 
 ## Repository Map
 - `my_small_tools/scopy.py`: save an SSH target, send files/folders into its Downloads, or download into local Downloads, with unique names and live progress.
+- `my_small_tools/stt.py`, `stt_review.py`, `stt_review.html`: transcription, local speaker review, and LogSeq meeting notes; review uses Deepgram Nova-3 through OpenRouter.
 - `my_small_tools/writing_forge/`: AI-assisted prose analysis pipeline (parse -> analyze -> render/compile) with JSON caching.
 - `my_small_tools/sync_knowledge_base.py`: sync multiple git repos from config (`pull --rebase`, commit, push).
 - `my_small_tools/forecast.py`: CSV time-series forecasting and plot generation.
@@ -34,6 +35,7 @@ Registered entry points (`pyproject.toml`):
 - `uv run remove_bg ...`
 - `uv run youtube-transcribe ...`
 - `uv run stt <audio-file> [--summarize]`
+- `uv run stt <audio-file> --review [--transcript-json <diarized-response.json>]`: local playback, naming, corrections and notes; rerun to reopen saved edits. `--port N` chooses a port; `--no-open` prints the URL.
 
 Unregistered scripts (run by path):
 - `uv run my_small_tools/text_to_speech.py ...`
@@ -46,6 +48,7 @@ Unregistered scripts (run by path):
 - Python: `>=3.12` (project baseline). Some standalone scripts may require newer Python at runtime.
 - `writing_forge` analysis requires `OPENROUTER_API_KEY` and network access (OpenRouter endpoint).
 - `stt` requires `OPENROUTER_API_KEY` and OpenRouter access. Install `ffmpeg` and `ffprobe` for automatic audio conversion/chunking; without them, supported files under 25 MB upload directly.
+- `stt --review` uses the standard-library HTTP server bound only to `127.0.0.1`; no new web dependencies. Existing JSON imports and reopening a review need no API key; new transcription and notes require it. `ffmpeg` is needed only to convert unsupported or oversized recordings for review. Review uploads are capped at 25 MB after compression; do not split and silently equate speaker IDs across chunks. Preserve `provider.json` and the corrected `review.json`; private session data belongs outside the repo.
 - `ffmpeg_convert` requires `ffmpeg` available in `PATH`.
 - `text_to_speech.py` requires `piper` in `PATH` and an ONNX voice model/config.
 - `sync_knowledge_base` config file location: `~/.config/my_small_tools/sync_knowledge_base.ini` (or platform equivalent).

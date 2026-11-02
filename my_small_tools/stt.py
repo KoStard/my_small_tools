@@ -218,20 +218,31 @@ def summarize_transcript(text: str, api_key: str, profile: str,
 @click.option("--meeting-date", type=click.DateTime(formats=["%Y-%m-%d"]), help="Actual meeting date (YYYY-MM-DD), not the file date.")
 @click.option("--language", help="Optional ISO-639-1 transcription language, e.g. en. Default: auto-detect.")
 @click.option("--force", is_flag=True, help="Discard previous transcription checkpoint and notes and transcribe again.")
+@click.option("--review", is_flag=True, help="Open local speaker review with playback, corrections, and notes (Deepgram Nova-3).")
+@click.option("--transcript-json", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="With --review, import an existing diarized response without a transcription charge.")
+@click.option("--port", default=0, type=click.IntRange(0, 65535), help="Local review port; 0 selects a free port.")
+@click.option("--no-open", is_flag=True, help="Print the review URL without opening a browser.")
 def main(audio: Path, summarize: str | None, output_dir: Path | None, speaker: tuple[str, ...],
-         context: str, meeting_date, language: str | None, force: bool):
+         context: str, meeting_date, language: str | None, force: bool, review: bool,
+         transcript_json: Path | None, port: int, no_open: bool):
     """Transcribe AUDIO using OPENROUTER_API_KEY from the environment.
 
     Saves transcript.txt and a resumable state.json. --summarize also writes
     notes.md (nested bullets and TODOs, no wiki links). Reruns reuse the saved
     transcript, including manual corrections, and regenerate notes.
 
+    --review opens a local browser for speaker naming, audio playback, and
+    correcting passages before generating notes. New reviews use Deepgram
+    Nova-3; --transcript-json imports an existing diarized response. Review
+    edits live in <audio-stem>.review and reopen without retranscription.
+
     Install ffmpeg and ffprobe for automatic two-hour audio chunks and format
     conversion. Without them, supported files under 25 MB upload directly.
     Chunk labels mark approximate starts, not word or speaker timestamps.
     """
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if not api_key:
+    if not api_key and not review:
         raise click.ClickException("Set OPENROUTER_API_KEY in your environment.")
     if audio.stat().st_size == 0:
         raise click.ClickException("Audio file is empty.")
@@ -239,6 +250,19 @@ def main(audio: Path, summarize: str | None, output_dir: Path | None, speaker: t
         raise click.ClickException("--language must be a two-letter ISO-639-1 code.")
     if any(not name.strip() for name in speaker):
         raise click.ClickException("--speaker names must not be empty.")
+    if not review and (transcript_json or port or no_open):
+        raise click.ClickException("--transcript-json, --port and --no-open require --review.")
+    if review:
+        if force or summarize:
+            raise click.ClickException("Review saves corrections; generate notes in the page. Use a new -o directory for a fresh transcription.")
+        from my_small_tools.stt_review import launch
+        try:
+            launch(audio, output_dir or audio.with_name(f"{audio.stem}.review"), transcript_json,
+                   language, speaker, context, meeting_date.strftime("%Y-%m-%d") if meeting_date else None,
+                   port, not no_open)
+        except (OSError, ValueError, KeyError, TypeError, requests.RequestException) as exc:
+            raise click.ClickException(f"Review failed ({type(exc).__name__}); check recording, JSON, output folder, and port.") from exc
+        return
     output = (output_dir or audio.with_name(f"{audio.stem}.stt")).resolve()
     try:
         output.mkdir(parents=True, exist_ok=True)
