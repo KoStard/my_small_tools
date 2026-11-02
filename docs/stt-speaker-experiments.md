@@ -169,6 +169,68 @@ small local review flow above while preserving existing CLI behavior.
 
 ## Reproducing the probes
 
+### Successful speaker-labeled recording: Deepgram Nova-3
+
+A follow-up tested `deepgram/nova-3` through the same OpenRouter
+`audio/transcriptions` endpoint. Endpoint discovery reported provider tag
+`deepgram`. OpenRouter documents forwarding `diarize`, `punctuate` and
+`smart_format` under `provider.options.deepgram`. Unlike the Nemotron path,
+this returned actual speaker fields for the complete recording.
+
+The successful request used multipart upload, `response_format=verbose_json`,
+`timestamp_granularities[]=word`, and a JSON-encoded form field named `provider`:
+
+```json
+{"options":{"deepgram":{"diarize":true,"punctuate":true,"smart_format":true}}}
+```
+
+Measured full-recording result: HTTP 200, 4.253 seconds, $0.03907152 reported
+cost, 545.184 reported input seconds, 116 timestamped segments, 1,509 timestamped
+words, and two provider speaker IDs (0 and 1). Adjacent segments sharing a
+speaker were grouped into 21 turns for the readable transcript. Speaker 1 maps
+to raw ID 0 and Speaker 2 to raw ID 1; names were not inferred. A token-by-token
+comparison confirmed the readable output preserves all segment text in order.
+These are automatic attributions, not a human-validated accuracy measurement.
+The final recognized segment ends at 536.91 seconds; reported input duration
+alone does not establish complete speech coverage.
+
+A 90-second smoke test of the committed multipart runner returned HTTP 200 in
+2.321 seconds, cost $0.00645516, and produced 20 segments and 272 words. However,
+it assigned only raw speaker 0 throughout, whereas the full-recording run
+labels a voice change around 01:09. This is an observed sensitivity to excerpt
+context and a reason to review the full transcript by listening before treating
+speaker assignments as reliable. The runner's syntax/help checks and all 11
+existing STT tests passed. Total reported cost for these two successful Nova-3
+requests was $0.04552668.
+
+The first full-recording base64 JSON request was rejected with HTTP 400 and
+"The selected model does not support large audio inputs". The equivalent
+multipart upload succeeded, so no audio splitting or cross-chunk speaker
+matching was needed. The existing everyday `stt` command remains unchanged.
+
+Reproduce the successful path (normal transcription charges apply):
+
+```sh
+uv run experiments/stt_speakers.py "/path/to/recording.m4a" \
+  --seconds 546 --case nova3-diarize --transport multipart \
+  -o "/path/outside/repo/diarized-recording"
+```
+
+The runner writes `nova3-diarize.json`, `metrics.json`, the prepared audio, and
+`nova3-diarize-speakers.txt` when the response actually contains speaker-labeled
+segments. Missing labels do not produce a fabricated dialogue. The original
+four default probes remain unchanged; Nova-3 is explicitly selected.
+
+[OpenRouter's STT options](https://openrouter.ai/docs/guides/overview/multimodal/stt)
+document provider-specific diarization and speaker fields.
+[Deepgram's diarization documentation](https://developers.deepgram.com/docs/diarization)
+states that `diarize=true` still selects its v1 diarizer; the newer
+`diarize_model` parameter is recommended natively, but OpenRouter's documented
+allowlist does not establish forwarding it. This experiment uses the option
+verified to return labels, without claiming it tests Deepgram's latest diarizer.
+
+### Original Nemotron comparison
+
 Requires existing project dependencies, OPENROUTER_API_KEY, ffmpeg and ffprobe.
 The script is an experiment, not a registered CLI. Each selected case uploads
 the same prepared excerpt separately and incurs normal API charges.

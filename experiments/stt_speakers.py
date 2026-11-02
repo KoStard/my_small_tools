@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import subprocess
+import textwrap
 import time
 from pathlib import Path
 
@@ -27,7 +28,8 @@ SPEAKER_PROMPT = (
     "Write numbers in their standard written form. "
     "Put speaker tags <spk:0> <spk:1> <spk:2> <spk:3> on the transcription."
 )
-CASES = ("nemotron", "whisper", "nemotron-speakers", "nemotron-chat")
+DEFAULT_CASES = ("nemotron", "whisper", "nemotron-speakers", "nemotron-chat")
+CASES = (*DEFAULT_CASES, "nova3-diarize")
 
 
 def payload_for(case: str, encoded: str) -> tuple[str, dict]:
@@ -40,6 +42,11 @@ def payload_for(case: str, encoded: str) -> tuple[str, dict]:
     }
     if case == "whisper":
         payload["model"] = "openai/whisper-large-v3-turbo"
+    elif case == "nova3-diarize":
+        payload["model"] = "deepgram/nova-3"
+        payload["provider"] = {"options": {"deepgram": {
+            "diarize": True, "punctuate": True, "smart_format": True,
+        }}}
     elif case == "nemotron-speakers":
         # Endpoint discovery reported deepinfra/bf16. initial_prompt and
         # chunk_level are in DeepInfra's published native input schema.
@@ -76,6 +83,37 @@ def metrics_for(data: dict) -> dict:
     }
 
 
+def speaker_transcript(data: dict) -> str | None:
+    """Group adjacent labeled segments without guessing identities or editing text."""
+    segments = data.get("segments") or []
+    if not any(row.get("speaker") is not None for row in segments):
+        return None
+    turns = []
+    for row in segments:
+        speaker = row.get("speaker")
+        if turns and turns[-1]["speaker"] == speaker:
+            turns[-1]["text"] += " " + row["text"].strip()
+            turns[-1]["end"] = row["end"]
+        else:
+            turns.append({"speaker": speaker, "start": row["start"],
+                          "end": row["end"], "text": row["text"].strip()})
+    # Use readable labels in order of appearance, retaining raw IDs in the header.
+    labels = {}
+    for turn in turns:
+        if turn["speaker"] is not None:
+            labels.setdefault(turn["speaker"], f"Speaker {len(labels) + 1}")
+    def timestamp(seconds):
+        minutes, seconds = divmod(int(seconds), 60)
+        return f"{minutes:02d}:{seconds:02d}"
+    header = "Automatic speaker labels; identities and attribution need review.\n"
+    header += "; ".join(f"{name} = provider speaker {key}" for key, name in labels.items())
+    body = [f"[{timestamp(turn['start'])}–{timestamp(turn['end'])}] "
+            f"{labels.get(turn['speaker'], 'Unknown speaker')}\n"
+            + textwrap.fill(turn["text"], width=100, break_long_words=False,
+                            break_on_hyphens=False) for turn in turns]
+    return header + "\n\n" + "\n\n".join(body) + "\n"
+
+
 @click.command()
 @click.argument("audio", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--output-dir", "-o", required=True,
@@ -86,7 +124,10 @@ def metrics_for(data: dict) -> dict:
               show_default=True, help="Excerpt length. Model limit: one hour.")
 @click.option("--case", "cases", multiple=True, type=click.Choice(CASES),
               help="Repeat to choose probes. Default: all four, each billed separately.")
-def main(audio: Path, output_dir: Path, start: float, seconds: float, cases: tuple[str, ...]):
+@click.option("--transport", type=click.Choice(["json", "multipart"]), default="json",
+              show_default=True, help="Multipart avoids the large JSON input routing limit.")
+def main(audio: Path, output_dir: Path, start: float, seconds: float,
+         cases: tuple[str, ...], transport: str):
     """Compare transcription capabilities on the same excerpt of AUDIO.
 
     Retains raw responses, safe request settings, measured latency, billed cost,
@@ -121,7 +162,7 @@ def main(audio: Path, output_dir: Path, start: float, seconds: float, cases: tup
         duration = float(probe.stdout.strip())
         encoded = base64.b64encode(sample.read_bytes()).decode("ascii")
         results = []
-        for case in dict.fromkeys(cases or CASES):
+        for case in dict.fromkeys(cases or DEFAULT_CASES):
             endpoint, payload = payload_for(case, encoded)
             # Save settings without the audio/base64 payload or credentials.
             settings = {k: v for k, v in payload.items() if k not in {"input_audio", "messages"}}
@@ -130,12 +171,21 @@ def main(audio: Path, output_dir: Path, start: float, seconds: float, cases: tup
             click.echo(f"Running {case} ({duration:.1f}s excerpt)...", err=True)
             started = time.monotonic()
             result = {"case": case, "endpoint": endpoint, "settings": settings,
-                      "start_seconds": start, "audio_seconds": duration}
+                      "start_seconds": start, "audio_seconds": duration,
+                      "transport": transport if endpoint == "audio/transcriptions" else "json"}
             try:
-                response = requests.post(
-                    f"{BASE_URL}/{endpoint}", headers={"Authorization": f"Bearer {key}"},
-                    json=payload, timeout=(15, 180),
-                )
+                options = {"headers": {"Authorization": f"Bearer {key}"}, "timeout": (15, 180)}
+                if transport == "multipart" and endpoint == "audio/transcriptions":
+                    form = {k: v for k, v in payload.items()
+                            if k not in {"input_audio", "timestamp_granularities", "provider"}}
+                    form["timestamp_granularities[]"] = payload["timestamp_granularities"]
+                    if "provider" in payload:
+                        form["provider"] = json.dumps(payload["provider"])
+                    with sample.open("rb") as handle:
+                        response = requests.post(f"{BASE_URL}/{endpoint}", data=form,
+                                                 files={"file": (sample.name, handle)}, **options)
+                else:
+                    response = requests.post(f"{BASE_URL}/{endpoint}", json=payload, **options)
                 result["status"] = response.status_code
                 data = response.json()
                 if not isinstance(data, dict):
@@ -144,6 +194,9 @@ def main(audio: Path, output_dir: Path, start: float, seconds: float, cases: tup
                     json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8",
                 )
                 result.update(metrics_for(data))
+                readable = speaker_transcript(data) if response.ok else None
+                if readable:
+                    (output_dir / f"{case}-speakers.txt").write_text(readable, encoding="utf-8")
             except (requests.RequestException, ValueError, TypeError, KeyError) as exc:
                 # Do not print response bodies or exception messages containing input.
                 result["error_type"] = type(exc).__name__
