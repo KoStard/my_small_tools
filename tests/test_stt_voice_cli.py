@@ -85,6 +85,22 @@ class VoiceCLITests(unittest.TestCase):
         self.assertNotEqual(result.exit_code, 0)
         self.assertEqual(self.session.path.read_bytes(), before)
 
+    def test_notes_use_confirmed_names_and_corrected_text_without_retranscription(self):
+        state = self.session.snapshot()
+        state["speakers"] = {"P1": "Georg Maerz", "P2": "Ruben Kostandyan"}
+        state["segments"][0]["text"] = "Corrected discussion."
+        self.session.update(state)
+        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "test-key"}), \
+             patch.object(stt, "summarize_transcript", return_value="- Meeting notes\n") as summarize, \
+             patch.object(stt, "request", side_effect=AssertionError("No transcription")):
+            result = self.invoke(["notes", "--profile", "long"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        args = summarize.call_args.args
+        self.assertIn("P1 (Georg Maerz)\nCorrected discussion.", args[0])
+        self.assertEqual(args[2], "long")
+        self.assertEqual(args[3], state["speakers"])
+        self.assertEqual((self.output / "notes.md").read_text(), "- Meeting notes\n")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -431,5 +431,32 @@ def forget(profile_id):
     click.echo(f"Forgot profile {profile_id}; saved transcript names are unchanged.")
 
 
+@cli.command()
+@review_command
+@click.option("--profile", type=click.Choice(["short", "middle", "long"]),
+              help="Notes detail; defaults to the saved review setting.")
+@click.option("--context", help="Meeting background; defaults to the saved review setting.")
+@click.option("--meeting-date", type=click.DateTime(formats=["%Y-%m-%d"]),
+              help="Actual meeting date; defaults to the saved review setting.")
+def notes(session, profile, context, meeting_date):
+    """Generate LogSeq notes from saved speaker names and corrected passages.
+
+    Reuses transcription. Requires OPENROUTER_API_KEY; notes generation incurs
+    the normal model charge. Previous notes are retained if generation fails.
+    """
+    state = session.snapshot()
+    if profile is not None or context is not None or meeting_date is not None:
+        if profile is not None:
+            state["profile"] = profile
+        if context is not None:
+            state["context"] = context
+        if meeting_date is not None:
+            state["meeting_date"] = meeting_date.strftime("%Y-%m-%d")
+        session.update(state)
+    click.echo("Generating notes from the saved review (OpenRouter charges apply)...", err=True)
+    session.generate(session.snapshot()["revision"])
+    click.echo(f"Notes: {session.output / 'notes.md'}")
+
+
 if __name__ == "__main__":
     cli()

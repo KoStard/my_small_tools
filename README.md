@@ -72,6 +72,7 @@ uv run stt-voice name "/path/to/meeting.m4a" --speaker P1 --name "Alice"
 uv run stt-voice dismiss "/path/to/meeting.m4a" --speaker P2
 uv run stt-voice match "/path/to/meeting.m4a" --reset-dismissed --json
 uv run stt-voice forget PROFILE_ID
+uv run stt-voice notes "/path/to/meeting.m4a" --profile middle
 ```
 
 `name` assigns or clears a transcript name without retraining any profile;
@@ -79,7 +80,11 @@ uv run stt-voice forget PROFILE_ID
 unless you request `--reset-dismissed`, which clears prior rejections; it never
 assigns a name or learns automatically. In JSON, `status` is `suggested`,
 `unsure`, or `no_match`, and `choices` contains plausible remembered people.
-Confirmed names always take precedence. CLI and browser writes use a shared
+`notes` generates the existing LogSeq format from saved speaker names and
+corrected passages without retranscribing; it uses the saved detail setting,
+background and date unless overridden with `--profile`, `--context` or
+`--meeting-date`. It requires OPENROUTER_API_KEY and incurs a notes-model charge.
+Previous notes survive generation failures. Confirmed names always take precedence. CLI and browser writes use a shared
 file lock and revision checks; reload an open browser after CLI corrections.
 
 The UI offers **Sounds like NAME** for a clear candidate, **Is this NAME?** when
