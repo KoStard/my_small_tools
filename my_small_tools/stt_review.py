@@ -113,12 +113,18 @@ def validate_edits(value, current):
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
             raise ValueError("Invalid meeting date.")
         calendar_date.fromisoformat(date)
+    dismissed = value.get("voice_dismissed", [])
+    if not isinstance(dismissed, list) or any(not isinstance(key, str) or key not in speakers for key in dismissed):
+        raise ValueError("Invalid voice suggestion feedback.")
     return {"speakers": speakers.copy(), "segments": cleaned, "profile": profile,
-            "context": context, "meeting_date": date}
+            "context": context, "meeting_date": date, "voice_dismissed": list(set(dismissed))}
 
 
 class ReviewSession:
-    def __init__(self, audio, output, imported=None, language=None, speakers=(), context="", meeting_date=None):
+    def __init__(self, audio, output, imported=None, language=None, speakers=(), context="", meeting_date=None,
+                 voice_memory=None):
+        from my_small_tools.stt_voice import VoiceMemory
+        self.voice_memory = voice_memory if voice_memory is not None else VoiceMemory()
         self.audio, self.output = audio.resolve(), output.resolve()
         self.lock = threading.Lock()
         with self.audio.open("rb") as handle:
@@ -181,7 +187,32 @@ class ReviewSession:
 
     def snapshot(self):
         with self.lock:
-            return {**copy.deepcopy(self.state), "title": self.audio.stem, "notes": self.notes}
+            return {**copy.deepcopy(self.state), "title": self.audio.stem, "notes": self.notes,
+                    "voice": self.voice_memory.public()}
+
+    def remember_voice(self, revision, speaker, name):
+        with self.lock:
+            if revision != self.state["revision"]:
+                raise Conflict("Save the latest corrections before remembering your voice.")
+            result = self.voice_memory.enroll(self.audio, self.state, speaker, name)
+            self.state["speakers"][speaker] = result["name"]
+            self.state["voice_dismissed"] = []
+            self.state["revision"] += 1
+            self.persist()
+            return {"voice": result, "revision": self.state["revision"], "speaker": speaker, "name": result["name"]}
+
+    def match_voice(self, revision):
+        with self.lock:
+            if revision != self.state["revision"]:
+                raise Conflict("Save corrections before checking your voice.")
+            state = copy.deepcopy(self.state)
+        result = self.voice_memory.suggest(self.audio, state)
+        for speaker in state.get("voice_dismissed", []):
+            result.get("suggestions", {}).pop(speaker, None)
+        with self.lock:
+            if revision != self.state["revision"]:
+                raise Conflict("Review changed during matching; check your voice again.")
+        return result
 
     def update(self, value):
         with self.lock:
@@ -333,6 +364,12 @@ def make_server(session, port=0):
                     self.reply(200, {"revision": session.update(value)})
                 elif route == "notes":
                     self.reply(200, {"notes": session.generate(value.get("revision"))})
+                elif route == "voice-enroll":
+                    self.reply(200, session.remember_voice(value.get("revision"), value.get("speaker"), value.get("name", "Me")))
+                elif route == "voice-match":
+                    self.reply(200, session.match_voice(value.get("revision")))
+                elif route == "voice-forget":
+                    self.reply(200, session.voice_memory.forget())
                 else:
                     self.reply(404, {"error": "Not found."})
             except Conflict as exc:

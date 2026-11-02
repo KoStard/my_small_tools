@@ -169,6 +169,48 @@ small local review flow above while preserving existing CLI behavior.
 
 ## Reproducing the probes
 
+### Local voice memory
+
+The review now offers explicit **This is me** enrollment and local name
+suggestions using WeSpeaker ResNet34-LM on ONNX Runtime. The user identified
+Speaker 2 as their voice; five separate five-second samples were enrolled under
+the editable name **Me**. The embedding model was downloaded from the official
+WeSpeaker repository at pinned revision
+`f0c48c298fd835726c27956a5d617bad7115627e`, with SHA-256 verification.
+No audio was uploaded for enrollment or matching, and no audio snippets were
+persisted. The local profile stores embeddings and calibration statistics.
+
+Before enrollment, a same-recording leave-one-out check of the five Speaker 2
+embeddings produced cosine similarities 0.738, 0.779, 0.821, 0.778 and 0.864.
+Five Speaker 1 samples compared with the Speaker 2 centroid scored -0.042,
+-0.165, -0.113, -0.049 and -0.130. Model download plus extraction of these ten
+samples took 6.25 seconds on this computer. These are similarity scores, not
+identity probabilities; the check establishes separation in this recording,
+not accuracy across future microphones or sessions.
+
+A disposable browser review reversed P1/P2 assignments and left both names
+blank. Local matching offered **Sounds like Me** for P1 (the user's actual
+voice after the swap), while leaving names blank until confirmation. This
+demonstrates matching audio rather than memorizing the recording's speaker ID.
+An additional one-sample case exercises the uncertainty prompt rather than a
+confident suggestion. Synthetic checks also cover multiple matching clusters,
+borderline scores, mixed clusters, failed enrollment retaining a previous
+profile, private profile permissions, forgetting, rejection persistence, stale
+review conflicts and names remaining unchanged until confirmation.
+
+Enrollment requires at least three usable samples and rejects inconsistent
+samples. Its similarity threshold is never below the WeSpeaker ONNX example's
+0.5 threshold; local positive/negative separation may raise it. A confident
+suggestion requires at least three consistently matching samples, successful
+enrollment separation and a single matching cluster. Otherwise plausible or
+insufficient evidence asks **Is this you?**; low similarity offers no name.
+Suggestions never retrain the profile or overwrite entered names. Future
+recordings from other devices remain a necessary real-world validation step.
+
+Sources: [official model](https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM),
+[ONNX examples](https://github.com/wenet-e2e/wespeaker/tree/master/runtime/onnxruntime),
+[feature extraction](https://github.com/wenet-e2e/wespeaker/blob/master/wespeaker/cli/speaker.py).
+
 ### Successful speaker-labeled recording: Deepgram Nova-3
 
 A follow-up tested `deepgram/nova-3` through the same OpenRouter

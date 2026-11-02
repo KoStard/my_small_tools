@@ -14,7 +14,7 @@
 <div id="global-error" role="alert" class="error"></div>
 <main>
  <aside class="sidebar">
-  <section class="panel"><h2>Who’s speaking?</h2><p class="muted">Listen to an example, then name the voice. Names update every passage assigned to that speaker.</p><div id="voices"></div><button id="add-speaker">+ Add speaker</button><p class="footnote">Automatic labels can be wrong. Correct a passage using its speaker menu; split it if the voice changes partway through.</p></section>
+  <section class="panel"><h2>Who’s speaking?</h2><p class="muted">Listen to an example, then name the voice. Names update every passage assigned to that speaker.</p><div id="voices"></div><button id="add-speaker">+ Add speaker</button><p id="voice-status" class="footnote" role="status"></p><div class="actions"><button id="voice-recheck" hidden>Check my voice</button><button id="voice-forget" hidden>Forget my voice</button></div><p class="footnote">“This is me” remembers a voice signature on this computer; audio stays local. The first use downloads a 26.5 MB model. Suggestions need your confirmation and never train the profile automatically.</p><p class="footnote">Automatic labels can be wrong. Correct a passage using its speaker menu; split it if the voice changes partway through.</p></section>
   <section class="panel"><h2>Meeting notes</h2><div class="notes-settings"><label>Detail<select id="profile"><option value="short">Short</option><option value="middle" selected>Balanced</option><option value="long">Detailed</option></select></label><label>Meeting date (optional)<input id="meeting-date" type="date"></label><label>Background (optional)<textarea id="context" rows="3" placeholder="Roles, names, terminology…"></textarea></label><button id="generate" class="primary">Save & generate notes</button></div><p class="footnote">Sends the corrected transcript to OpenRouter. Normal model charges apply; your API key stays on the local server.</p><p id="notes-status" class="muted" role="status"></p></section>
  </aside>
  <div><section><h2>Review the conversation <span id="count" class="muted"></span></h2><div class="filters"><input id="search" type="search" aria-label="Search transcript" placeholder="Find a word or phrase…"><select id="filter" aria-label="Filter by speaker"></select></div><div id="passages"></div></section><section id="notes-panel" class="panel" hidden><div class="actions"><h2>Meeting notes</h2><button id="download-notes">Download notes</button></div><pre id="notes" class="notes-output"></pre></section></div>
@@ -22,7 +22,7 @@
 <dialog id="split-dialog"><h2>Split this passage</h2><p>The text splits at your cursor; the time below is an estimate. Listen around it and adjust the boundary.</p><label>Split time (seconds into recording)<input id="split-time" type="number" min="0" step="0.01"></label><p id="split-error" class="error" role="alert"></p><div class="actions"><button id="preview-split">Listen around boundary</button><button id="cancel-split">Cancel</button><button id="confirm-split" class="primary">Split passage</button></div></dialog>
 <script>
 'use strict';
-let state, dirty=false, editSerial=0, savePending=null, stopAt=null, splitTarget=null;
+let state, dirty=false, editSerial=0, savePending=null, stopAt=null, splitTarget=null, voiceBusy=false;
 const history=[], samples={}, palette=['#4c8861','#8570a8','#c08b48','#4b8b9e','#ba7186'];
 const $=id=>document.getElementById(id), audio=$('audio');
 const element=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
@@ -49,6 +49,17 @@ audio.addEventListener('error',()=>error('Your browser could not play this audio
 $('speed').onchange=()=>{audio.playbackRate=Number($('speed').value);};
 function fillSpeakers(select,selected,all=false){select.replaceChildren();if(all){const o=element('option','All speakers');o.value='';select.append(o);}for(const id of Object.keys(state.speakers)){const o=element('option',name(id));o.value=id;select.append(o);}select.value=selected;}
 function refreshLabels(){document.querySelectorAll('.speaker-select').forEach(select=>fillSpeakers(select,select.value));fillSpeakers($('filter'),$('filter').value,true);}
+function voiceStatus(message){$('voice-status').textContent=message||state.voice?.error||(state.voice?.enrolled?`Remembered locally as ${state.voice.name}. New recordings will be checked against this voice.`:'Choose “This is me” after listening to your voice.');$('voice-recheck').hidden=!state.voice?.enrolled;$('voice-forget').hidden=!state.voice?.enrolled&&!state.voice?.error;$('voice-recheck').disabled=$('voice-forget').disabled=voiceBusy;}
+async function checkVoice(reset=false){
+ if(voiceBusy||!state.voice?.enrolled)return;voiceBusy=true;voiceStatus('Checking your voice on this computer…');
+ try{if(reset){state.voice_dismissed=[];changed();}await saveReview();const serial=editSerial,revision=state.revision;const result=await api('voice-match',{revision});if(serial===editSerial&&revision===state.revision){state.voice=result;renderVoices();const pending=Object.entries(result.suggestions||{}).some(([id,s])=>!state.speakers[id].trim()&&s.status!=='no_match');voiceStatus(pending?'Voice suggestions are ready below; listen before confirming.':Object.values(state.speakers).includes(result.name)?'Your saved name is kept; voice matching never replaces your corrections.':'No confident match. Is one of these voices you? Listen, then choose “This is me”.');}else{voiceStatus('Review changed; check your voice again after saving.');}}
+ catch(e){error(e.message);voiceStatus('Voice matching failed; your review is unchanged.');}finally{voiceBusy=false;renderVoices();$('voice-recheck').disabled=$('voice-forget').disabled=false;}
+}
+async function rememberVoice(id){
+ if(voiceBusy)return;voiceBusy=true;error();voiceStatus('Remembering your voice locally…');renderVoices();
+ try{await saveReview();const serial=editSerial;const result=await api('voice-enroll',{revision:state.revision,speaker:id,name:state.speakers[id].trim()||state.voice?.name||'Me'});state.revision=result.revision;state.voice=result.voice;if(serial===editSerial){state.speakers[id]=result.name;dirty=false;$('status').textContent='Saved locally';}else{changed();}history.length=0;$('undo').disabled=true;refreshLabels();notesStatus();voiceStatus(`Voice remembered as ${result.name} on this computer. Change the name and click “This is me” again to update it.`);}
+ catch(e){error(e.message);voiceStatus('Could not remember the voice; your previous voice profile is retained.');}finally{voiceBusy=false;renderVoices();$('voice-recheck').disabled=$('voice-forget').disabled=false;}
+}
 function renderVoices(){
  $('voices').replaceChildren();
  for(const id of Object.keys(state.speakers)){
@@ -59,7 +70,15 @@ function renderVoices(){
   voice.append(element('small',`${candidates.length} passages`));
   const buttons=element('div',undefined,'actions'),listen=element('button','▶ Listen'),next=element('button','Another example');
   const sample=()=>{const s=candidates[(samples[id]||0)%candidates.length];if(s)play(s.start,Math.min(s.end,s.start+8));};
-  listen.disabled=next.disabled=!candidates.length;listen.onclick=sample;next.onclick=()=>{samples[id]=(samples[id]||0)+1;sample();};buttons.append(listen,next);voice.append(buttons);$('voices').append(voice);
+  listen.disabled=next.disabled=!candidates.length;listen.onclick=sample;next.onclick=()=>{samples[id]=(samples[id]||0)+1;sample();};buttons.append(listen,next);voice.append(buttons);
+  const me=element('button','This is me');me.setAttribute('aria-label',`Speaker ${id.slice(1)} is me`);me.disabled=voiceBusy||!candidates.length;me.onclick=()=>rememberVoice(id);voice.append(me);
+  const suggestion=state.voice?.suggestions?.[id];
+  if(suggestion&&suggestion.status!=='no_match'&&!state.speakers[id].trim()&&!(state.voice_dismissed||[]).includes(id)){
+   const question=element('p',suggestion.status==='suggested'?`Sounds like ${suggestion.name}`:`Is this you, ${suggestion.name}?`,'muted');
+   const accept=element('button',`Use ${suggestion.name}`),reject=element('button','Not me');accept.setAttribute('aria-label',`Use ${suggestion.name} for speaker ${id.slice(1)}`);reject.setAttribute('aria-label',`Speaker ${id.slice(1)} is not me`);
+   accept.onclick=()=>{remember();state.speakers[id]=suggestion.name;changed();renderVoices();refreshLabels();};reject.onclick=()=>{remember();state.voice_dismissed=[...(state.voice_dismissed||[]),id];changed();renderVoices();};const decisions=element('div',undefined,'actions');decisions.append(accept,reject);voice.append(question,decisions);
+  }
+  $('voices').append(voice);
  }
 }
 function renderPassages(){
@@ -79,10 +98,12 @@ function renderPassages(){
  }
  if(!rows.length)$('passages').append(element('p','No matching passages.','empty'));
 }
-function render(){renderVoices();fillSpeakers($('filter'),'',true);renderPassages();$('profile').value=state.profile;$('context').value=state.context;$('meeting-date').value=state.meeting_date;$('notes').textContent=state.notes||'';$('notes-panel').hidden=!state.notes;notesStatus();}
+function render(){renderVoices();voiceStatus();fillSpeakers($('filter'),'',true);renderPassages();$('profile').value=state.profile;$('context').value=state.context;$('meeting-date').value=state.meeting_date;$('notes').textContent=state.notes||'';$('notes-panel').hidden=!state.notes;notesStatus();}
+$('voice-recheck').onclick=()=>checkVoice(true);
+$('voice-forget').onclick=async()=>{if(voiceBusy||!confirm('Forget your local voice signature? Names already saved in transcripts will stay.'))return;try{state.voice=await api('voice-forget',{});renderVoices();voiceStatus('Your voice signature was deleted from this computer; saved transcript names are unchanged.');}catch(e){error(e.message);}};
 $('search').oninput=renderPassages;$('filter').onchange=renderPassages;
 $('add-speaker').onclick=()=>{remember();const n=Math.max(...Object.keys(state.speakers).map(id=>Number(id.slice(1))))+1;state.speakers[`P${n}`]='';changed();renderVoices();refreshLabels();};
-$('undo').onclick=()=>{if(!history.length)return;const revision=state.revision,notes=state.notes,notesRevision=state.notes_revision;state=history.pop();state.revision=revision;state.notes=notes;state.notes_revision=notesRevision;changed();render();$('undo').disabled=!history.length;};
+$('undo').onclick=()=>{if(!history.length)return;const revision=state.revision,notes=state.notes,notesRevision=state.notes_revision,voice=state.voice;state=history.pop();state.voice=voice;state.revision=revision;state.notes=notes;state.notes_revision=notesRevision;changed();render();$('undo').disabled=!history.length;};
 for(const [id,key] of [['profile','profile'],['context','context'],['meeting-date','meeting_date']]){$(id).onfocus=remember;$(id).oninput=()=>{state[key]=$(id).value;changed();};}
 $('save').onclick=async()=>{error();try{await saveReview();}catch(e){error(e.message);$('status').textContent='Save failed — edits remain in this tab';}};
 $('cancel-split').onclick=()=>$('split-dialog').close();
@@ -94,6 +115,6 @@ $('download-notes').onclick=async()=>{try{await download('notes.md','notes.md');
 $('generate').onclick=async()=>{error();$('generate').disabled=true;$('notes-status').textContent='Saving corrections…';try{await saveReview();$('notes-status').textContent='Generating notes from your saved review…';const revision=state.revision,result=await api('notes',{revision});state.notes=result.notes;state.notes_revision=revision;$('notes').textContent=result.notes;$('notes-panel').hidden=false;notesStatus();}catch(e){error(e.message);$('notes-status').textContent='Notes were not replaced; your saved review is retained.';}finally{$('generate').disabled=false;}};
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
 window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='s'){e.preventDefault();$('save').click();}});
-api('session').then(result=>{state=result;$('title').textContent=state.title;document.title=`${state.title} · Speaker review`;render();$('status').textContent='Saved locally';}).catch(e=>{error(e.message);$('status').textContent='Could not open review';});
+api('session').then(result=>{state=result;$('title').textContent=state.title;document.title=`${state.title} · Speaker review`;render();$('status').textContent='Saved locally';if(state.voice?.enrolled)checkVoice();}).catch(e=>{error(e.message);$('status').textContent='Could not open review';});
 </script>
 </html>

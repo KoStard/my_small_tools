@@ -26,6 +26,9 @@ dependencies = [
     "youtube-transcript-api>=1.2.3",
     "requests>=2.32.5",
     "beautifulsoup4>=4.14.3",
+    "onnxruntime>=1.31.1",
+    "kaldi-native-fbank>=1.22.4",
+    "numpy>=2.4.3",
 ]
 
 [project.scripts]

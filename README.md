@@ -41,6 +41,52 @@ does not split long recordings and equate independent speaker IDs. Browser audio
 support varies by format; MP3 and M4A are convenient for playback. The original
 plain `stt AUDIO [--summarize]` workflow continues to use Whisper.
 
+### Remember your own voice
+
+After listening, enter your name on your speaker card and click **This is me**
+(blank names use **Me**). The tool extracts several separate voice samples and
+stores their embeddings locally. On future reviews it compares the new voices
+against that profile: **Sounds like Me** offers a name suggestion, while
+**Is this you, Me?** asks about uncertain, inconsistent, or short evidence.
+Use the proposed name or choose **Not me**; no suggestion overwrites a name
+you already entered. Rejections are saved with that review. **Check my voice**
+clears those rejections and checks again after you correct speaker assignments.
+
+Suggestions always need confirmation and never retrain the voice profile.
+Click **This is me** again to explicitly replace its samples or change its name.
+**Forget my voice** deletes the profile without removing confirmed names in
+saved transcripts. Enrollment changes are saved immediately; ordinary name
+suggestions and rejections use the existing **Save changes** control.
+
+Voice recognition requires `ffmpeg`, `onnxruntime`, `kaldi-native-fbank`, and
+`numpy` (the Python packages are project dependencies). On first use it
+downloads the official 26.5 MB WeSpeaker ResNet34-LM model with a pinned revision
+and checksum, then runs inference on the CPU. The download contains only model
+weights; no recording, audio snippet, transcript, or voice embedding is sent
+away for voice matching. This is separate from the existing remote transcription
+and notes APIs. Future matching works offline once the model is downloaded.
+
+The profile lives at `appdirs.user_data_dir("my_small_tools")/voice/me.json`
+(macOS: `~/Library/Application Support/my_small_tools/voice/me.json`), with
+owner-only file permissions. It stores your display name, several 256-value
+voice embeddings, a matching threshold, calibration statistics and the enrollment
+recording's hash; it does not copy or save audio snippets. Treat that file as
+personal data. Model weights are stored in the same directory. The page sees
+only enrollment status and suggested names, never profile vectors.
+
+The model uses cosine similarity, not a probability of identity. A suggestion
+requires at least three consistent samples, adequate enrollment separation,
+and only one clearly matching speaker cluster; borderline or ambiguous matches
+ask instead. This is a convenience for reviewing recordings, not authentication.
+Different microphones, noise, overlapping speech and incorrect diarization can
+still affect it; confirm suggestions by listening.
+
+Model: [WeSpeaker ResNet34-LM](https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM),
+trained on VoxCeleb2 Dev and licensed CC BY 4.0; revision
+`f0c48c298fd835726c27956a5d617bad7115627e`. See the
+[WeSpeaker project](https://github.com/wenet-e2e/wespeaker) for its paper,
+feature extraction and ONNX verification examples.
+
 ## Copy to an SSH target
 
 ```bash

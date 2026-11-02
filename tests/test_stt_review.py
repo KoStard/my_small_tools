@@ -13,6 +13,7 @@ import requests
 from click.testing import CliRunner
 
 from my_small_tools import stt, stt_review as review
+from my_small_tools.stt_voice import VoiceMemory
 
 
 class ReviewTests(unittest.TestCase):
@@ -29,7 +30,8 @@ class ReviewTests(unittest.TestCase):
         self.imported = self.root / "provider.json"
         self.imported.write_text(json.dumps(self.raw))
         self.output = self.root / "review"
-        self.session = review.ReviewSession(self.audio, self.output, self.imported)
+        self.session = review.ReviewSession(self.audio, self.output, self.imported,
+                                            voice_memory=VoiceMemory(self.root / "voice"))
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -125,6 +127,37 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(form["model"], "deepgram/nova-3")
         self.assertTrue(json.loads(form["provider"])["options"]["deepgram"]["diarize"])
         self.assertIn("file", request.call_args.kwargs["files"])
+
+    def test_remembering_voice_assigns_only_the_confirmed_speaker_and_checks_revision(self):
+        public = {"enrolled": True, "name": "Me", "samples": 3}
+        with patch.object(self.session.voice_memory, "enroll", return_value=public) as enroll:
+            result = self.session.remember_voice(0, "P2", "Me")
+            with self.assertRaises(review.Conflict):
+                self.session.remember_voice(0, "P1", "Me")
+        enroll.assert_called_once()
+        self.assertEqual(result["revision"], 1)
+        self.assertEqual(self.session.state["speakers"], {"P1": "", "P2": "Me"})
+        self.assertEqual(json.loads(self.session.path.read_text())["speakers"]["P2"], "Me")
+
+    def test_rejected_suggestions_persist_and_profile_vectors_never_reach_browser(self):
+        value = self.session.snapshot()
+        value["voice_dismissed"] = ["P1"]
+        revision = self.session.update(value)
+        with patch.object(self.session.voice_memory, "suggest", return_value={
+            "enrolled": True, "suggestions": {"P1": {"name": "Me", "status": "unsure"}}
+        }):
+            self.assertEqual(self.session.match_voice(revision)["suggestions"], {})
+        reopened = review.ReviewSession(self.audio, self.output, voice_memory=self.session.voice_memory)
+        self.assertEqual(reopened.state["voice_dismissed"], ["P1"])
+        self.assertNotIn("centroid", reopened.snapshot()["voice"])
+
+    def test_review_changes_during_matching_discard_stale_suggestions(self):
+        def concurrent_edit(*args):
+            self.session.update(self.session.snapshot())
+            return {"enrolled": True, "suggestions": {}}
+        with patch.object(self.session.voice_memory, "suggest", side_effect=concurrent_edit):
+            with self.assertRaises(review.Conflict):
+                self.session.match_voice(0)
 
     def test_local_http_audio_seeking_saves_and_origin_protection(self):
         with review.make_server(self.session) as server:
