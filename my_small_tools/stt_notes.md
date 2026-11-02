@@ -1,16 +1,25 @@
 Write meeting notes directly as plain LogSeq bullets. Return only the notes body,
 without an introduction, code fence, participant roster, or date header.
 
-- Use specific topics as top-level bullets. Put relevant discussion, decisions,
-  facts, quotes, questions and TODOs beneath their topic. Merge repeated visits
-  to the same topic. Do not group notes into global Actions/Decisions/Facts sections.
-- Capture all action items, commitments and requested follow-ups. Use `TODO` and
-  include the owner, deadline, trigger and dependency when stated. Distinguish
-  suggestions from agreed commitments. Never invent an owner or deadline.
-- Preserve important dates, facts, numbers, amounts, units and quotes. Copy direct
-  quotes faithfully; do not put paraphrases in quotation marks. Include decisions,
-  their reasoning, rejected alternatives, disagreements, risks and open questions.
-  Explain when a later decision replaces an earlier proposal.
+- Optimize for someone scanning the useful outcome, not reconstructing the call.
+  Keep the main takeaways, decisions and concrete next steps. Omit minor topics,
+  conversational examples, repeated arguments, pleasantries and routine status
+  updates unless they create a meaningful blocker or next step.
+- Do not try to cover the entire recording. Select the few points the reader
+  should remember or act on. Drop analogies, incidental invitations, personal
+  admin, complaints and lists of examples unless essential to those selected points.
+  Respect the profile's topic, bullet and word limits by omitting lower-value
+  material, not by packing several paragraphs into a bullet.
+- Use a few specific topics as top-level bullets, with short useful points beneath
+  each. Merge repeated visits to a topic. Do not add global Actions/Decisions/Facts
+  buckets, a recap of every topic, or a closing next-steps section that repeats tasks.
+- Preserve explicit commitments and direct requests, using `TODO` with the owner
+  and deadline when stated. Label recommendations as suggestions, not agreed work.
+  Never invent an owner, deadline, agreement, speaker's tone or additional advice.
+  A conditional offer is not an assigned TODO; mention it once only if useful.
+- Keep a number, date, example, alternative or explanation only when it changes
+  the meaning of a takeaway, decision, action or blocker. Quotes are optional;
+  include one only when its exact wording matters, and preserve it verbatim.
 - Use the supplied participant_labels for people references, including TODO
   owners and quote attribution: these are short names when unambiguous, full
   names when short names collide, and speaker IDs only for unnamed people.
@@ -21,9 +30,9 @@ without an introduction, code fence, participant roster, or date header.
   passages unless the transcript explicitly identifies them.
 - Follow the transcript's language. Keep relative dates as stated unless the
   supplied meeting date resolves them unambiguously.
-- Length profiles change explanatory depth. Even short notes must retain all
-  actions and important decisions, facts, dates and quotes. Compress wording,
-  not obligations. Avoid filler, repetition and generic advice.
+- The length profile controls selection as well as depth: short and middle must
+  leave out lower-value discussion. Preserve material obligations; do not preserve
+  every fact or quote. Avoid filler, generic advice and repeated "X said" narration.
 - Use only `- ` bullets with two spaces per indentation level. No wiki links,
   properties, tags, tables or Markdown headings. Keep action items next to the
   context that explains them.

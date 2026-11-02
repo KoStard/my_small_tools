@@ -16,7 +16,7 @@ import requests
 
 BASE_URL = "https://openrouter.ai/api/v1"
 TRANSCRIPTION_MODEL = "openai/whisper-large-v3-turbo"
-SUMMARY_MODEL = "anthropic/claude-haiku-5.5"
+SUMMARY_MODEL = "anthropic/claude-sonnet-5.5"
 CHUNK_SECONDS = 2 * 60 * 60
 OVERLAP_SECONDS = 2
 MAX_MULTIPART_BYTES = 25_000_000
@@ -24,9 +24,9 @@ FORMATS = {"wav", "mp3", "flac", "m4a", "ogg", "webm", "aac"}
 
 
 PROFILES = {
-    "short": "Compact notes: compress discussion to the essential context and outcomes.",
-    "middle": "Balanced notes: include important reasoning, constraints, tradeoffs and dependencies.",
-    "long": "Detailed notes: include substantive discussion, examples, alternatives and disagreements.",
+    "short": "Brief notes: at most 100 words, 2 topics and 4 child bullets. Keep only essential outcomes and concrete next steps.",
+    "middle": "Concise notes: at most 180 words, 3 topics and 6 child bullets total. Each child bullet should be 10–25 words. Keep main takeaways and concrete next steps; omit secondary discussion.",
+    "long": "Detailed notes: include substantive reasoning, constraints, alternatives and disagreements without repeating the conversation.",
 }
 
 

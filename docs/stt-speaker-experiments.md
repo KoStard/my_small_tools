@@ -169,6 +169,47 @@ small local review flow above while preserving existing CLI behavior.
 
 ## Reproducing the probes
 
+### Concise notes: Haiku versus Sonnet
+
+The user found the 736-word balanced notes too verbose. Both models received
+the same complete saved transcript, participant names, temperature 0 and prompt
+within each round. The existing notes were preserved outside the repository.
+Model availability was checked through OpenRouter's models API and
+[Sonnet's model page](https://openrouter.ai/anthropic/claude-sonnet-5.5/providers).
+
+| Prompt | Model | Words including roster | Wall seconds | Upstream cost estimate |
+| --- | --- | ---: | ---: | ---: |
+| First concise draft, 150–250-word target | Haiku 5.5 | 284 | 7.53 | $0.0011038 |
+| Same | Sonnet 5.5 | 349 | 6.27 | $0.015296 |
+| Final, 180 words / 3 topics / 6 child bullets requested | Haiku 5.5 | 112 | 7.11 | $0.0012026 |
+| Same | Sonnet 5.5 | 178 | 4.53 | $0.012542 |
+
+The first draft still covered secondary status updates and examples. The final
+prompt explicitly selects useful outcomes rather than covering the recording,
+and removes the previous demand to preserve every fact and quote even in short
+notes. Short asks for at most 100 words; balanced asks for at most 180; long
+retains substantive detail. There is no token truncation or fragile length
+rejection that could discard a useful result.
+
+Sonnet's final result was selected: it retained the deformation opportunity and
+kept the Antioch analogy as an analogy for simulation tuning. Haiku omitted the
+deformation point and described a more literal compute-hosting/sensor-twin
+recommendation, although the source explicitly says that is a different field.
+Sonnet also avoided labeling the conditional spreadsheet-input offer as an
+assigned TODO. Its result was about 76% shorter than the previous notes.
+
+Sonnet's default was promoted to `anthropic/claude-sonnet-5.5`, and its already
+generated result was installed only after checking that the saved review had
+not changed. All raw responses, both rounds' notes, metrics, the earlier notes,
+and final prompt remain in the recording's private `note-comparison` folder.
+
+Limits: this is a qualitative comparison on one recording, not a general model
+benchmark. Neither model corrected the upstream diarization. Sonnet followed
+the word target but used seven child bullets rather than six; prompt budgets
+remain generation instructions. Timings are single requests. Usage was marked
+BYOK with zero OpenRouter cost; the table reports `upstream_inference_cost`
+estimates, not a separately verified bill.
+
 ### Multiple people and CLI management
 
 Voice memory now keeps the existing personal `me.json` alongside independent

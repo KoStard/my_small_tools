@@ -84,6 +84,11 @@ assigns a name or learns automatically. In JSON, `status` is `suggested`,
 corrected passages without retranscribing; it uses the saved detail setting,
 background and date unless overridden with `--profile`, `--context` or
 `--meeting-date`. It requires OPENROUTER_API_KEY and incurs a notes-model charge.
+Notes use Claude Sonnet 5.5. The default balanced profile selects the main
+takeaways and next steps, targeting at most 180 words in three topics; short
+targets at most 100 words, while long retains substantive reasoning and detail.
+These are generation instructions, not truncation limits. Incidental discussion,
+routine status updates and illustrative analogies are omitted unless needed.
 Previous notes survive generation failures. Confirmed names always take precedence.
 Notes use first names in the discussion when unambiguous, full names when first
 names collide, and speaker IDs only for unnamed people; the People roster keeps
