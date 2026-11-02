@@ -29,11 +29,13 @@ dependencies = [
     "onnxruntime>=1.31.1",
     "kaldi-native-fbank>=1.22.4",
     "numpy>=2.4.3",
+    "filelock>=4.2.4",
 ]
 
 [project.scripts]
 scopy = "my_small_tools.scopy:main"
 stt = "my_small_tools.stt:main"
+stt-voice = "my_small_tools.stt_voice:cli"
 writing-forge = "my_small_tools.writing_forge.main:cli"
 sync-knowledge-base = "my_small_tools.sync_knowledge_base:main"
 hermes-research = "my_small_tools.hermes_research.hermes_research_manager:main"

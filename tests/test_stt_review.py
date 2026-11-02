@@ -159,6 +159,20 @@ class ReviewTests(unittest.TestCase):
             with self.assertRaises(review.Conflict):
                 self.session.match_voice(0)
 
+    def test_cli_and_web_instances_share_revisions_without_lost_updates(self):
+        other = review.ReviewSession(self.audio, self.output, voice_memory=self.session.voice_memory)
+        stale = self.session.snapshot()
+        value = other.snapshot()
+        value["speakers"]["P1"] = "Alice"
+        other.update(value)
+        self.assertEqual(self.session.snapshot()["speakers"]["P1"], "Alice")
+        with self.assertRaises(review.Conflict):
+            self.session.update(stale)
+        value = self.session.snapshot()
+        value["speakers"]["P2"] = "Bob"
+        self.session.update(value)
+        self.assertEqual(other.snapshot()["speakers"], {"P1": "Alice", "P2": "Bob"})
+
     def test_local_http_audio_seeking_saves_and_origin_protection(self):
         with review.make_server(self.session) as server:
             thread = threading.Thread(target=server.serve_forever, daemon=True)

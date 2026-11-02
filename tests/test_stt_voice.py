@@ -108,6 +108,50 @@ class VoiceTests(unittest.TestCase):
         self.assertIn("error", public)
         self.assertFalse(self.memory.forget()["enrolled"])
 
+    def enroll_georg(self):
+        with patch.object(self.memory, "vectors", side_effect=lambda a, s, who: [vector(0, 1)] * 3 if who == "P1" else [vector(1)] * 3):
+            return self.memory.enroll(self.root / "audio.wav", self.state, "P1", "Georg Maerz", profile_id=None)
+
+    def test_other_people_are_separate_private_profiles_without_replacing_me(self):
+        self.enroll()
+        own_before = self.memory.profile_path.read_bytes()
+        result = self.enroll_georg()
+        self.assertEqual(result["saved_name"], "Georg Maerz")
+        self.assertEqual(self.memory.profile_path.read_bytes(), own_before)
+        path = self.memory.path_for(result["saved_id"])
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual({p["name"] for p in self.memory.public()["profiles"]}, {"Me", "Georg Maerz"})
+        self.memory.forget(result["saved_id"])
+        self.assertFalse(path.exists())
+        self.assertEqual(self.memory.profile_path.read_bytes(), own_before)
+
+    def test_two_distinct_people_match_after_speaker_ids_change(self):
+        self.enroll()
+        self.enroll_georg()
+        with patch.object(self.memory, "vectors", side_effect=lambda a, s, who: [vector(1)] * 3 if who == "P1" else [vector(0, 1)] * 3):
+            suggestions = self.memory.suggest(self.root / "new.wav", self.state)["suggestions"]
+        self.assertEqual(suggestions["P1"]["name"], "Me")
+        self.assertEqual(suggestions["P2"]["name"], "Georg Maerz")
+        self.assertTrue(all(s["status"] == "suggested" for s in suggestions.values()))
+
+    def test_similar_saved_people_are_offered_as_choices_instead_of_picking_one(self):
+        self.enroll()
+        with patch.object(self.memory, "vectors", side_effect=lambda a, s, who: [vector(1)] * 3 if who == "P1" else [vector(0, 1)] * 3):
+            self.memory.enroll(self.root / "audio.wav", self.state, "P1", "Similar voice", profile_id=None)
+        with patch.object(self.memory, "vectors", side_effect=lambda a, s, who: [vector(1)] * 3 if who == "P2" else [vector(0, 1)] * 3):
+            suggestion = self.memory.suggest(self.root / "new.wav", self.state)["suggestions"]["P2"]
+        self.assertEqual(suggestion["status"], "unsure")
+        self.assertEqual({choice["name"] for choice in suggestion["choices"]}, {"Me", "Similar voice"})
+
+    def test_duplicate_names_and_unknown_update_ids_cannot_overwrite_profiles(self):
+        self.enroll()
+        before = self.memory.profile_path.read_bytes()
+        for profile_id, name in ((None, "Me"), ("a" * 32, "Unknown"), ("../me", "Bad path")):
+            with patch.object(self.memory, "vectors", side_effect=AssertionError("Do not extract invalid enrollment")):
+                with self.assertRaises(click.ClickException):
+                    self.memory.enroll(self.root / "audio.wav", self.state, "P1", name, profile_id=profile_id)
+        self.assertEqual(self.memory.profile_path.read_bytes(), before)
+
 
 if __name__ == "__main__":
     unittest.main()

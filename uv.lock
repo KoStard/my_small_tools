@@ -11,7 +11,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-10-26T21:30:48.111043Z"
+exclude-newer = "2026-10-26T21:56:04.77659Z"
 exclude-newer-span = "P7D"
 
 [[package]]
@@ -177,6 +177,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/fc/f8/98eea607f65de6527f8a2e8885fc8015d3e6f5775df186e443e0964a11c3/distro-1.9.0.tar.gz", hash = "sha256:2fa77c6fd8940f116ee1d6b94a2f90b13b5ea8d019b98bc8bafdcabcdd9bdbed", size = 60722, upload-time = "2023-12-24T09:54:32.31Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/12/b3/231ffd4ab1fc9d679809f356cebee130ac7daa00d6d6f3206dd4fd137e9e/distro-1.9.0-py3-none-any.whl", hash = "sha256:7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2", size = 20277, upload-time = "2023-12-24T09:54:30.421Z" },
+]
+
+[[package]]
+name = "filelock"
+version = "4.2.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d8/28/3893324bcadf8f89b1616637468d766af3f625008c0735bf704fdfa86617/filelock-4.2.4.tar.gz", hash = "sha256:c6d8663535e1650ee430507b4ffbac7b464dd64b7647ea0112a9f406499d163d", size = 652444, upload-time = "2026-10-19T01:57:51.001Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e0/1b/5e74289a1878e666bb4b65fe5805a04cafcac2aa5f519ef1ead67ef91c56/filelock-4.2.4-py3-none-any.whl", hash = "sha256:301241438c57936ef93f4243a94f2559022268bfcf9b375a9a72eb0f8db8358e", size = 162475, upload-time = "2026-10-19T01:57:49.419Z" },
 ]
 
 [[package]]
@@ -383,6 +392,7 @@ dependencies = [
     { name = "appdirs" },
     { name = "beautifulsoup4" },
     { name = "click" },
+    { name = "filelock" },
     { name = "kaldi-native-fbank" },
     { name = "marko" },
     { name = "numpy" },
@@ -407,6 +417,7 @@ requires-dist = [
     { name = "appdirs", specifier = ">=1.4.4" },
     { name = "beautifulsoup4", specifier = ">=4.14.3" },
     { name = "click", specifier = ">=8.1.0" },
+    { name = "filelock", specifier = ">=4.2.4" },
     { name = "kaldi-native-fbank", specifier = ">=1.22.4" },
     { name = "marko", specifier = ">=2.0.0" },
     { name = "numpy", specifier = ">=2.4.3" },

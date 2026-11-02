@@ -41,22 +41,55 @@ does not split long recordings and equate independent speaker IDs. Browser audio
 support varies by format; MP3 and M4A are convenient for playback. The original
 plain `stt AUDIO [--summarize]` workflow continues to use Whisper.
 
-### Remember your own voice
+### Remember speakers locally
 
-After listening, enter your name on your speaker card and click **This is me**
-(blank names use **Me**). The tool extracts several separate voice samples and
-stores their embeddings locally. On future reviews it compares the new voices
-against that profile: **Sounds like Me** offers a name suggestion, while
-**Is this you, Me?** asks about uncertain, inconsistent, or short evidence.
-Use the proposed name or choose **Not me**; no suggestion overwrites a name
-you already entered. Rejections are saved with that review. **Check my voice**
-clears those rejections and checks again after you correct speaker assignments.
+The browser and `stt-voice` CLI use the same profiles and review data. Adding a
+person does not replace your personal voice profile. Enter a name and click
+**Remember speaker**, or use the terminal:
 
-Suggestions always need confirmation and never retrain the voice profile.
-Click **This is me** again to explicitly replace its samples or change its name.
-**Forget my voice** deletes the profile without removing confirmed names in
-saved transcripts. Enrollment changes are saved immediately; ordinary name
-suggestions and rejections use the existing **Save changes** control.
+```bash
+uv run stt-voice speakers "/path/to/meeting.m4a"
+uv run stt-voice remember "/path/to/meeting.m4a" --speaker P1 --name "Alice"
+uv run stt-voice remember "/path/to/meeting.m4a" --speaker P2 --name "My Name" --me
+uv run stt-voice list --json
+uv run stt-voice match "/path/to/meeting.m4a" --json
+```
+
+These commands require a saved review; use `--transcript-json response.json`
+on a recording command to initialize one without buying another transcription.
+Use `-o` for a nondefault review folder. `speakers` lists recording-local IDs
+and sample intervals (`--json` includes exact times); `list` shows stable saved
+profile IDs and metadata without embeddings. The CLI does not open a browser.
+
+`remember` creates a new person by default; `--me` explicitly updates your
+personal profile. Use `--profile-id ID` to update a particular existing person
+instead (the UI provides an **Update NAME** selector). Duplicate names and
+unknown update IDs are rejected rather than silently replacing someone.
+
+```bash
+uv run stt-voice remember "/path/to/meeting.m4a" --speaker P1 --name "Alice" --profile-id PROFILE_ID
+uv run stt-voice name "/path/to/meeting.m4a" --speaker P1 --name "Alice"
+uv run stt-voice dismiss "/path/to/meeting.m4a" --speaker P2
+uv run stt-voice match "/path/to/meeting.m4a" --reset-dismissed --json
+uv run stt-voice forget PROFILE_ID
+```
+
+`name` assigns or clears a transcript name without retraining any profile;
+`dismiss` rejects suggestions for that recording's speaker. Matching is read-only
+unless you request `--reset-dismissed`, which clears prior rejections; it never
+assigns a name or learns automatically. In JSON, `status` is `suggested`,
+`unsure`, or `no_match`, and `choices` contains plausible remembered people.
+Confirmed names always take precedence. CLI and browser writes use a shared
+file lock and revision checks; reload an open browser after CLI corrections.
+
+The UI offers **Sounds like NAME** for a clear candidate, **Is this NAME?** when
+uncertain, or **Which person is this?** when several identities fit. You can
+choose a name or **None of these**. Rejections are saved with the review;
+**Check remembered voices** reconsiders them after corrections. **This is me**
+still updates your personal profile. **Forget** next to a remembered person
+removes only their signature, keeping other profiles and saved transcript names.
+Enrollment saves immediately; ordinary name assignments and rejections use
+**Save changes**. Suggestions never overwrite entered names or retrain profiles.
 
 Voice recognition requires `ffmpeg`, `onnxruntime`, `kaldi-native-fbank`, and
 `numpy` (the Python packages are project dependencies). On first use it
@@ -66,13 +99,17 @@ weights; no recording, audio snippet, transcript, or voice embedding is sent
 away for voice matching. This is separate from the existing remote transcription
 and notes APIs. Future matching works offline once the model is downloaded.
 
-The profile lives at `appdirs.user_data_dir("my_small_tools")/voice/me.json`
-(macOS: `~/Library/Application Support/my_small_tools/voice/me.json`), with
+Voice memory lives under `appdirs.user_data_dir("my_small_tools")/voice/`; your
+personal profile remains `me.json`, and other people use `people/<profile-id>.json`
+(macOS: `~/Library/Application Support/my_small_tools/voice/`), with
 owner-only file permissions. It stores your display name, several 256-value
 voice embeddings, a matching threshold, calibration statistics and the enrollment
-recording's hash; it does not copy or save audio snippets. Treat that file as
-personal data. Model weights are stored in the same directory. The page sees
-only enrollment status and suggested names, never profile vectors.
+recording's hash; it does not copy or save audio snippets. Treat these files as
+personal data. Model weights are stored in the same directory. The page and CLI listing see
+only metadata and suggested names, never profile vectors. Actual profiles live
+outside the repository; `.gitignore` also excludes `*.review/`, `.stt-voices/`,
+`voice-profiles/`, and a root-level `voice/` folder for private local copies.
+Arbitrary JSON files or audio copied elsewhere are not automatically ignored.
 
 The model uses cosine similarity, not a probability of identity. A suggestion
 requires at least three consistent samples, adequate enrollment separation,

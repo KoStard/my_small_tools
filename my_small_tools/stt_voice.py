@@ -9,9 +9,12 @@ Similarity scores are cosine similarities, never calibrated probabilities.
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
 import threading
+import uuid
+from functools import wraps
 from pathlib import Path
 
 import appdirs
@@ -69,11 +72,19 @@ class VoiceMemory:
         self.lock = threading.RLock()
         self.model = None
 
-    def profile(self):
+    def path_for(self, profile_id):
+        if profile_id == "me":
+            return self.profile_path  # Preserve existing personal enrollment without migration.
+        if not isinstance(profile_id, str) or not re.fullmatch(r"[a-f0-9]{32}", profile_id):
+            raise click.ClickException("Invalid remembered person.")
+        return self.directory / "people" / f"{profile_id}.json"
+
+    def profile(self, profile_id="me"):
         with self.lock:
-            if not self.profile_path.exists():
+            path = self.path_for(profile_id)
+            if not path.exists():
                 return None
-            profile = json.loads(self.profile_path.read_text(encoding="utf-8"))
+            profile = json.loads(path.read_text(encoding="utf-8"))
             if profile.get("model") != MODEL_ID:
                 raise click.ClickException("The saved voice uses a different model; enroll your voice again.")
             unit(profile["centroid"])
@@ -87,14 +98,30 @@ class VoiceMemory:
                 unit(sample)
             return profile
 
+    def profiles(self):
+        """A damaged profile must not prevent reviewing audio or using other people."""
+        ids = (["me"] if self.profile_path.exists() else [])
+        ids += sorted(path.stem for path in (self.directory / "people").glob("*.json"))
+        profiles, broken = {}, []
+        for identifier in ids:
+            try:
+                profile = self.profile(identifier)
+                if profile:
+                    profiles[identifier] = profile
+            except (click.ClickException, ValueError, KeyError, TypeError, OSError, AttributeError):
+                broken.append(identifier)
+        return profiles, broken
+
     def public(self):
-        try:
-            profile = self.profile()
-        except (click.ClickException, ValueError, KeyError, TypeError, OSError, AttributeError):
-            return {"enrolled": False, "name": "", "samples": 0,
-                    "error": "The saved voice profile cannot be read; use This is me to replace it, or Forget my voice."}
-        return {"enrolled": bool(profile), "name": profile["name"] if profile else "",
-                "samples": len(profile["samples"]) if profile else 0}
+        profiles, broken = self.profiles()
+        me = profiles.get("me")
+        result = {"enrolled": bool(profiles), "name": me["name"] if me else "",
+                  "samples": len(me["samples"]) if me else 0,
+                  "profiles": [{"id": key, "name": profile["name"], "samples": len(profile["samples"])}
+                               for key, profile in profiles.items()], "broken": broken}
+        if broken:
+            result["error"] = "A saved voice profile cannot be read; forget it or enroll that person again."
+        return result
 
     def load_model(self):
         if self.model is not None:
@@ -169,11 +196,23 @@ class VoiceMemory:
                 found.append(vector)
         return found
 
-    def enroll(self, audio, state, speaker, name):
+    def enroll(self, audio, state, speaker, name, profile_id="me"):
         if (speaker not in state["speakers"] or not isinstance(name, str) or not name.strip()
                 or len(name) > 200 or any(c in name for c in "\r\n")):
             raise click.ClickException("Choose your speaker and enter a single-line name.")
         with self.lock:
+            profiles, _ = self.profiles()
+            creating = profile_id is None
+            if profile_id is None:
+                if any(profile["name"].casefold() == name.strip().casefold() for profile in profiles.values()):
+                    raise click.ClickException("That name is already remembered; select the existing person to update their voice.")
+                profile_id = uuid.uuid4().hex
+            path = self.path_for(profile_id)
+            if not creating and profile_id != "me" and not path.exists():
+                raise click.ClickException("The selected person is no longer remembered.")
+            if any(key != profile_id and profile["name"].casefold() == name.strip().casefold()
+                   for key, profile in profiles.items()):
+                raise click.ClickException("That name belongs to another remembered person; select their profile to update it.")
             vectors = self.vectors(audio, state, speaker)
             if len(vectors) < 3:
                 raise click.ClickException("Need three clear, non-overlapping voice samples of at least four seconds; correct the turns first.")
@@ -200,35 +239,197 @@ class VoiceMemory:
                        "calibration": {"own_min": positive, "other_max": negative},
                        "recording_sha256": state["signature"]["sha256"]}
             self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-            save(self.profile_path, json.dumps(profile, ensure_ascii=False, indent=2))
-            os.chmod(self.profile_path, 0o600)
-            return self.public()
+            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            save(path, json.dumps(profile, ensure_ascii=False, indent=2))
+            os.chmod(path, 0o600)
+            return {**self.public(), "saved_id": profile_id, "saved_name": profile["name"]}
 
     def suggest(self, audio, state):
         with self.lock:
-            profile = self.profile()
-            if not profile:
-                return {"enrolled": False, "suggestions": {}}
-            centroid = unit(profile["centroid"])
+            profiles, _ = self.profiles()
+            if not profiles:
+                return {**self.public(), "suggestions": {}}
             candidates = {}
             for speaker in state["speakers"]:
                 vectors = self.vectors(audio, state, speaker)
-                scores = [float(vector @ centroid) for vector in vectors]
-                if scores:
-                    candidates[speaker] = {"score": float(np.median(scores)), "samples": len(scores),
-                                           "consistent": min(scores) >= profile["threshold"]}
-            strong = [key for key, value in candidates.items() if value["samples"] >= 3
-                      and value["consistent"] and profile["separated"]]
-            for speaker, value in candidates.items():
-                value["name"] = profile["name"]
-                value["status"] = ("suggested" if len(strong) == 1 and speaker in strong else
-                                   "unsure" if value["score"] >= MIN_SIMILARITY else "no_match")
-                value.pop("consistent")
-            for speaker in state["speakers"]:
-                candidates.setdefault(speaker, {"name": profile["name"], "status": "unsure", "samples": 0, "score": None})
-            return {**self.public(), "suggestions": candidates}
+                matches = []
+                for profile_id, profile in profiles.items():
+                    scores = [float(vector @ unit(profile["centroid"])) for vector in vectors]
+                    score = float(np.median(scores)) if scores else None
+                    strong = (len(scores) >= 3 and min(scores) >= profile["threshold"] and profile["separated"])
+                    if score is None or score >= MIN_SIMILARITY:
+                        matches.append({"profile_id": profile_id, "name": profile["name"], "score": score,
+                                        "samples": len(scores), "strong": bool(strong)})
+                matches.sort(key=lambda item: item["score"] if item["score"] is not None else -1, reverse=True)
+                candidates[speaker] = matches
+            # Abstain when multiple identities fit, or one identity fits multiple
+            # clusters. A narrow numerical lead is not proof of identity.
+            strong_counts = {}
+            for matches in candidates.values():
+                for match in matches:
+                    if match["strong"]:
+                        key = match["profile_id"]
+                        strong_counts[key] = strong_counts.get(key, 0) + 1
+            suggestions = {}
+            for speaker, matches in candidates.items():
+                confident = (len(matches) == 1 and matches[0]["strong"]
+                             and strong_counts[matches[0]["profile_id"]] == 1)
+                choices = [{k: v for k, v in item.items() if k != "strong"} for item in matches]
+                best = choices[0] if choices else {"name": "", "score": None, "samples": 0}
+                suggestions[speaker] = {**best, "status": "suggested" if confident else "unsure" if choices else "no_match",
+                                        "choices": choices}
+            return {**self.public(), "suggestions": suggestions}
 
-    def forget(self):
+    def forget(self, profile_id="me"):
         with self.lock:
-            self.profile_path.unlink(missing_ok=True)
+            self.path_for(profile_id).unlink(missing_ok=True)
         return self.public()
+
+
+@click.group()
+def cli():
+    """Manage local remembered voices and speaker names without opening a browser.
+
+    Uses the same profiles and review checkpoints as stt --review. Matching
+    suggests names; only explicit name/remember commands change attribution.
+    """
+
+
+def review_command(function):
+    """Share a recording selector; import explicitly, never transcribe implicitly."""
+    @click.argument("audio", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+    @click.option("--output-dir", "-o", type=click.Path(file_okay=False, path_type=Path),
+                  help="Review folder; default: <audio-stem>.review beside the recording.")
+    @click.option("--transcript-json", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+                  help="Initialize a review from a full-recording diarized JSON response.")
+    @wraps(function)
+    def wrapped(audio, output_dir, transcript_json, **kwargs):
+        from my_small_tools.stt_review import ReviewSession
+        output = output_dir or audio.with_name(f"{audio.stem}.review")
+        checkpoint = output / "review.json"
+        if not checkpoint.exists() and transcript_json is None:
+            raise click.ClickException("No saved review. Run stt AUDIO --review or supply --transcript-json; this command never buys a transcription.")
+        try:
+            language = json.loads(checkpoint.read_text())["signature"].get("language") if checkpoint.exists() else None
+            session = ReviewSession(audio, output, transcript_json, language=language)
+            return function(session=session, **kwargs)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise click.ClickException(f"Voice command failed ({type(exc).__name__}); saved review and profiles are retained.") from exc
+    return wrapped
+
+
+@cli.command("list")
+@click.option("--json", "as_json", is_flag=True, help="Emit metadata without voice embeddings.")
+def list_people(as_json):
+    """List remembered people and stable profile IDs."""
+    public = VoiceMemory().public()
+    if as_json:
+        click.echo(json.dumps(public, ensure_ascii=False, indent=2))
+    else:
+        for profile in public["profiles"]:
+            click.echo(f"{profile['id']}\t{profile['name']}\t{profile['samples']} samples")
+        if not public["profiles"]:
+            click.echo("No remembered voices.")
+        for identifier in public["broken"]:
+            click.echo(f"{identifier}\tunreadable profile", err=True)
+
+
+@cli.command()
+@review_command
+@click.option("--speaker", required=True, help="Speaker identifier from 'speakers', e.g. P1.")
+@click.option("--name", required=True, help="Confirmed name for this speaker.")
+@click.option("--profile-id", help="Update this existing person; omit to create a new person.")
+@click.option("--me", is_flag=True, help="Update your personal profile (ID me).")
+def remember(session, speaker, name, profile_id, me):
+    """Remember a named voice locally and save its name in the review.
+
+    Requires ffmpeg and three clear samples; downloads the 26.5 MB model on
+    first use. No voice data is sent away for matching or enrollment.
+    """
+    if me and profile_id:
+        raise click.ClickException("Choose --me or --profile-id, not both.")
+    result = session.remember_voice(session.snapshot()["revision"], speaker, name,
+                                    "me" if me else profile_id)
+    click.echo(f"Remembered: {result['name']} ({result['voice']['saved_id']})")
+
+
+@cli.command()
+@review_command
+@click.option("--json", "as_json", is_flag=True)
+def speakers(session, as_json):
+    """List recording-local speaker IDs, names and available sample intervals."""
+    state = session.snapshot()
+    result = [{"speaker": key, "name": name, "passages": sum(row["speaker"] == key for row in state["segments"]),
+               "samples": [{"start": start, "end": start + length}
+                           for start, length in sample_windows(state["segments"], key)]}
+              for key, name in state["speakers"].items()]
+    if as_json:
+        click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        for row in result:
+            click.echo(f"{row['speaker']}\t{row['name'] or '(unnamed)'}\t{row['passages']} passages")
+
+
+@cli.command()
+@review_command
+@click.option("--json", "as_json", is_flag=True)
+@click.option("--reset-dismissed", is_flag=True, help="Reconsider previously rejected suggestions.")
+def match(session, as_json, reset_dismissed):
+    """Compare voices with remembered people; never assign names or retrain."""
+    state = session.snapshot()
+    if reset_dismissed:
+        state["voice_dismissed"] = []
+        session.update(state)
+        state = session.snapshot()
+    result = session.match_voice(state["revision"])
+    if as_json:
+        click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        for speaker, suggestion in result.get("suggestions", {}).items():
+            names = ", ".join(choice["name"] for choice in suggestion["choices"]) or "no remembered match"
+            click.echo(f"{speaker}\t{suggestion['status']}\t{names}")
+        if not result["enrolled"]:
+            click.echo("No remembered voices.")
+
+
+@cli.command("name")
+@review_command
+@click.option("--speaker", required=True)
+@click.option("--name", required=True, help="Confirmed display name; use an empty string to clear it.")
+def name_speaker(session, speaker, name):
+    """Assign or clear a transcript name without changing any voice profile."""
+    state = session.snapshot()
+    if speaker not in state["speakers"]:
+        raise click.ClickException("Unknown speaker; run 'speakers' to list this recording's IDs.")
+    state["speakers"][speaker] = name
+    session.update(state)
+    click.echo(f"{speaker}: {name or '(unnamed)'}")
+
+
+@cli.command()
+@review_command
+@click.option("--speaker", required=True)
+def dismiss(session, speaker):
+    """Reject name suggestions for this recording's speaker; keep profiles intact."""
+    state = session.snapshot()
+    if speaker not in state["speakers"]:
+        raise click.ClickException("Unknown speaker.")
+    state["voice_dismissed"] = list(set(state.get("voice_dismissed", []) + [speaker]))
+    session.update(state)
+    click.echo(f"Suggestions dismissed for {speaker}.")
+
+
+@cli.command()
+@click.argument("profile_id")
+def forget(profile_id):
+    """Delete one local voice profile by its ID; keep saved transcript names."""
+    memory = VoiceMemory()
+    public = memory.public()
+    if profile_id not in [profile["id"] for profile in public["profiles"]] + public["broken"]:
+        raise click.ClickException("Unknown profile ID; run 'list' first.")
+    memory.forget(profile_id)
+    click.echo(f"Forgot profile {profile_id}; saved transcript names are unchanged.")
+
+
+if __name__ == "__main__":
+    cli()

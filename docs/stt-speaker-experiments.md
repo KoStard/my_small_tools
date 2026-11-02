@@ -169,6 +169,37 @@ small local review flow above while preserving existing CLI behavior.
 
 ## Reproducing the probes
 
+### Multiple people and CLI management
+
+Voice memory now keeps the existing personal `me.json` alongside independent
+`people/<profile-id>.json` profiles. Each identity has a stable ID, name and
+embeddings; adding or forgetting one does not replace another. Matching compares
+each recording-local speaker with all remembered people. Multiple plausible
+identities produce explicit choices, rather than trusting a narrow score lead.
+
+The registered `stt-voice` CLI supports `list`, `speakers`, `remember`, `match`,
+`name`, `dismiss` and `forget`, using the same storage and operations as the web
+app. `--json` supports agent use without parsing prose. Enrollment creates a new
+person unless `--me` or `--profile-id` explicitly selects an update. Naming a
+transcript speaker and accepting/rejecting suggestions do not retrain profiles.
+Review commands require an existing review or explicit diarized JSON import;
+they never silently buy a new transcription.
+
+On the supplied recording, the CLI suggested the two confirmed identities for
+P1 and P2 respectively, with median cosine scores 0.895 and 0.861 from five
+samples each. A CLI update of the second person's profile succeeded while the
+personal profile's SHA-256 remained unchanged. This is a same-recording check,
+not a new cross-device validation result. Tests cover two identities after
+speaker-ID changes, competing similar identities, independent forgetting,
+duplicate-name and invalid-ID protection, complete CLI operation, and shared
+review revisions across CLI/web instances. File locks prevent concurrent
+instances from overwriting newer corrections; the UI requests a reload when its
+revision is stale.
+
+Private profiles remain outside the repository. `.gitignore` additionally
+excludes `*.review/`, `.stt-voices/`, `voice-profiles/`, and root `voice/` backups;
+`git check-ignore` verified representative paths for each rule.
+
 ### Local voice memory
 
 The review now offers explicit **This is me** enrollment and local name

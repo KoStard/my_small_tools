@@ -1,6 +1,7 @@
 """Loopback-only speaker review; no browser credentials or third-party assets."""
 
 import copy
+from contextlib import contextmanager
 import hashlib
 import json
 import math
@@ -17,6 +18,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import click
+from filelock import FileLock
 
 from my_small_tools import stt
 
@@ -132,6 +134,11 @@ class ReviewSession:
         signature = {"sha256": digest, "model": MODEL, "language": language, "provider": OPTIONS}
         self.path = self.output / "review.json"
         self.output.mkdir(parents=True, exist_ok=True)
+        self.disk_lock = FileLock(str(self.output / "review.lock"), timeout=180)
+        with self.disk_lock:
+            self.load_or_create(signature, imported, language, speakers, context, meeting_date)
+
+    def load_or_create(self, signature, imported, language, speakers, context, meeting_date):
         if self.path.exists():
             self.state = json.loads(self.path.read_text(encoding="utf-8"))
             if self.state.get("signature") != signature:
@@ -146,7 +153,7 @@ class ReviewSession:
                     raise click.ClickException("Saved provider output belongs to different settings; choose another directory.")
                 raw = json.loads(raw_path.read_text(encoding="utf-8"))
             else:
-                if any(self.output.iterdir()):
+                if any(path.name != "review.lock" for path in self.output.iterdir()):
                     raise click.ClickException("Choose an empty output directory for a new review.")
                 raw = json.loads(imported.read_text(encoding="utf-8")) if imported else self.transcribe(language)
                 # Store source identity first: a crash can never make raw output look reusable for another source.
@@ -185,39 +192,54 @@ class ReviewSession:
         stt.save(self.output / "transcript.txt", transcript(self.state))
         stt.save(self.path, json.dumps(self.state, ensure_ascii=False, indent=2))
 
+    @contextmanager
+    def transaction(self):
+        # The CLI and web server share this checkpoint; never overwrite edits
+        # made by another process using an old in-memory revision.
+        with self.lock, self.disk_lock:
+            saved = json.loads(self.path.read_text(encoding="utf-8"))
+            if saved.get("signature") != self.state["signature"]:
+                raise Conflict("Review identity changed; reopen this recording.")
+            validate_edits(saved, saved)
+            self.state = saved
+            notes_path = self.output / "notes.md"
+            self.notes = notes_path.read_text(encoding="utf-8") if notes_path.exists() else ""
+            yield
+
     def snapshot(self):
-        with self.lock:
+        with self.transaction():
             return {**copy.deepcopy(self.state), "title": self.audio.stem, "notes": self.notes,
                     "voice": self.voice_memory.public()}
 
-    def remember_voice(self, revision, speaker, name):
-        with self.lock:
+    def remember_voice(self, revision, speaker, name, profile_id="me"):
+        with self.transaction():
             if revision != self.state["revision"]:
                 raise Conflict("Save the latest corrections before remembering your voice.")
-            result = self.voice_memory.enroll(self.audio, self.state, speaker, name)
-            self.state["speakers"][speaker] = result["name"]
+            result = self.voice_memory.enroll(self.audio, self.state, speaker, name, profile_id=profile_id)
+            saved_name = result.get("saved_name", result["name"])
+            self.state["speakers"][speaker] = saved_name
             self.state["voice_dismissed"] = []
             self.state["revision"] += 1
             self.persist()
-            return {"voice": result, "revision": self.state["revision"], "speaker": speaker, "name": result["name"]}
+            return {"voice": result, "revision": self.state["revision"], "speaker": speaker, "name": saved_name}
 
     def match_voice(self, revision):
-        with self.lock:
+        with self.transaction():
             if revision != self.state["revision"]:
                 raise Conflict("Save corrections before checking your voice.")
             state = copy.deepcopy(self.state)
         result = self.voice_memory.suggest(self.audio, state)
         for speaker in state.get("voice_dismissed", []):
             result.get("suggestions", {}).pop(speaker, None)
-        with self.lock:
+        with self.transaction():
             if revision != self.state["revision"]:
                 raise Conflict("Review changed during matching; check your voice again.")
         return result
 
     def update(self, value):
-        with self.lock:
+        with self.transaction():
             if value.get("revision") != self.state["revision"]:
-                raise Conflict("This review changed in another tab; reload before saving.")
+                raise Conflict("This review changed in another window or CLI command; reload before saving.")
             edited = validate_edits(value, self.state)
             old = copy.deepcopy(self.state)
             self.state.update(edited)
@@ -230,7 +252,7 @@ class ReviewSession:
             return self.state["revision"]
 
     def generate(self, revision):
-        with self.lock:
+        with self.transaction():
             if revision != self.state["revision"]:
                 raise Conflict("Save the latest changes before generating notes.")
             state = copy.deepcopy(self.state)
@@ -243,7 +265,7 @@ class ReviewSession:
                     for identifier, name in state["speakers"].items()}
         notes = stt.summarize_transcript(transcript(state), key, state["profile"], speakers,
                                          state["context"], state["meeting_date"] or None)
-        with self.lock:
+        with self.transaction():
             if revision != self.state["revision"]:
                 raise Conflict("Review changed during generation; generate again from the saved corrections.")
             stt.save(self.output / "notes.md", notes)
@@ -296,7 +318,7 @@ def make_server(session, port=0):
             elif route == "session":
                 self.reply(200, session.snapshot())
             elif route in {"transcript.txt", "notes.md"}:
-                with session.lock:
+                with session.transaction():
                     text = transcript(session.state) if route == "transcript.txt" else session.notes
                 self.reply(200, text.encode(), "text/plain; charset=utf-8")
             elif route == "audio":
@@ -365,11 +387,11 @@ def make_server(session, port=0):
                 elif route == "notes":
                     self.reply(200, {"notes": session.generate(value.get("revision"))})
                 elif route == "voice-enroll":
-                    self.reply(200, session.remember_voice(value.get("revision"), value.get("speaker"), value.get("name", "Me")))
+                    self.reply(200, session.remember_voice(value.get("revision"), value.get("speaker"), value.get("name", "Me"), value.get("profile_id", "me")))
                 elif route == "voice-match":
                     self.reply(200, session.match_voice(value.get("revision")))
                 elif route == "voice-forget":
-                    self.reply(200, session.voice_memory.forget())
+                    self.reply(200, session.voice_memory.forget(value.get("profile_id", "me")))
                 else:
                     self.reply(404, {"error": "Not found."})
             except Conflict as exc:
