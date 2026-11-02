@@ -19,6 +19,14 @@ tested here returned neither speaker labels nor word alignment. This is an
 integration finding, not proof that the model cannot diarize, nor proof that
 every possible OpenRouter provider option is unsupported.
 
+Follow-up resolved the missing speaker labels: DeepInfra's
+[release announcement](https://deepinfra.com/blog/nvidia-nemotron-3-5-transcribe-release)
+explicitly says, "Speaker attribution in the API is coming soon."
+DeepInfra is the provider discovered for the OpenRouter model during this study.
+This explains why its hosted transcription path did not reproduce the
+speaker-attributed output supported by NVIDIA's model. Paragraph formatting does
+not address that missing functionality. Speaker labeling is the intended result.
+
 ## What the existing tool does
 
 `my_small_tools/stt.py` sends `response_format=json` to
@@ -142,10 +150,12 @@ Preserve manual text edits when reopening or relabeling a session.
 ## Smallest next experiment
 
 Obtain a documented serving path exposing both speaker tags and alignment for
-this exact model. Test its native endpoint on the same excerpts if credentials
-are available; otherwise use the model card's configured vLLM path when compute
-is intentionally provisioned. No new service or compute was provisioned here.
-Compare native and OpenRouter output to isolate gateway versus serving limits.
+this exact model. DeepInfra currently documents speaker attribution as pending,
+so switching from OpenRouter to its native API alone is not a supported solution.
+Use the model card's configured vLLM path when compute is intentionally
+provisioned, or test a hosted path that explicitly exposes speaker attribution.
+No new service or compute was provisioned here. A verified NVIDIA demo could
+also establish the expected output, but the exact demo the user saw is unknown.
 Adding a separate diarizer to Whisper is another measurable candidate if that
 integration remains unavailable; it is not validated by this study.
 
