@@ -178,6 +178,11 @@ continues and records it. Process success means the probes ran, not that every
 tested feature is supported. Output timestamps are relative to the excerpt;
 `start_seconds` records its offset in the original recording.
 
+The delivered local `transcript.txt` was subsequently formatted into 32
+paragraphs with lines wrapped at 100 characters. A whitespace-normalized
+comparison against `full-nemotron.json` confirmed the words are unchanged.
+These are readability breaks, not verified speaker turns or timestamps.
+
 Validation: Python syntax check; experiment and existing `stt --help`; all 11
 existing STT unit tests passed; all four runner cases exercised against the real
 05:00–06:30 excerpt. The full recording and opening excerpt were tested with
