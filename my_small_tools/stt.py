@@ -172,16 +172,33 @@ def transcribe(source: Path, output: Path, api_key: str, language: str | None,
     return text
 
 
+def participant_labels(speakers: dict[str, str]) -> dict[str, str]:
+    """Prefer first names, preserving identity when first names are shared."""
+    known = {key: name.strip() for key, name in speakers.items()
+             if name.strip() and name.strip() != "name not set"
+             and not re.fullmatch(r"P\d+ \(name not set\)", name.strip())}
+    first_names = [name.split()[0].casefold() for name in known.values()]
+    labels = {}
+    for key in speakers:
+        if key not in known:
+            labels[key] = key
+        else:
+            first = known[key].split()[0]
+            labels[key] = first if first_names.count(first.casefold()) == 1 else known[key]
+    return labels
+
+
 def summarize_transcript(text: str, api_key: str, profile: str,
                          speakers: dict[str, str], context: str, meeting_date: str | None) -> str:
     rules = Path(__file__).with_name("stt_notes.md").read_text(encoding="utf-8")
+    labels = participant_labels(speakers)
     response = request("chat/completions", api_key, json={
         "model": SUMMARY_MODEL,
         "temperature": 0,
         "messages": [
             {"role": "system", "content": rules + "\nLength profile: " + PROFILES[profile]},
             {"role": "user", "content": json.dumps({
-                "participants": speakers, "meeting_date": meeting_date,
+                "participants": speakers, "participant_labels": labels, "meeting_date": meeting_date,
                 "background": context, "transcript": text,
             }, ensure_ascii=False)},
         ],
@@ -201,7 +218,8 @@ def summarize_transcript(text: str, api_key: str, profile: str,
     if content.startswith("```") and content.endswith("```"):
         content = "\n".join(content.splitlines()[1:-1]).strip()
     content = content.replace("[[", "").replace("]]", "")
-    header = ["- People", *(f"  - {identifier}: {name}" for identifier, name in speakers.items())]
+    header = ["- People", *(f"  - {name}" if labels[identifier] != identifier
+                            else f"  - {identifier}: {name}" for identifier, name in speakers.items())]
     if meeting_date:
         header.append(f"- Meeting date: {meeting_date}")
     return "\n".join(header) + "\n" + content + "\n"

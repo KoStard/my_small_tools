@@ -84,8 +84,12 @@ assigns a name or learns automatically. In JSON, `status` is `suggested`,
 corrected passages without retranscribing; it uses the saved detail setting,
 background and date unless overridden with `--profile`, `--context` or
 `--meeting-date`. It requires OPENROUTER_API_KEY and incurs a notes-model charge.
-Previous notes survive generation failures. Confirmed names always take precedence. CLI and browser writes use a shared
-file lock and revision checks; reload an open browser after CLI corrections.
+Previous notes survive generation failures. Confirmed names always take precedence.
+Notes use first names in the discussion when unambiguous, full names when first
+names collide, and speaker IDs only for unnamed people; the People roster keeps
+full names.
+CLI and browser writes use a shared file lock and revision checks; reload an
+open browser after CLI corrections.
 
 The UI offers **Sounds like NAME** for a clear candidate, **Is this NAME?** when
 uncertain, or **Which person is this?** when several identities fit. You can

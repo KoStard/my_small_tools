@@ -11,8 +11,11 @@ without an introduction, code fence, participant roster, or date header.
   quotes faithfully; do not put paraphrases in quotation marks. Include decisions,
   their reasoning, rejected alternatives, disagreements, risks and open questions.
   Explain when a later decision replaces an earlier proposal.
-- Use the supplied P1/P2/etc. identifiers for people references. Names belong only
-  in the roster that the tool adds, except within direct quotes. Use explicit
+- Use the supplied participant_labels for people references, including TODO
+  owners and quote attribution: these are short names when unambiguous, full
+  names when short names collide, and speaker IDs only for unnamed people.
+  Do not write P1/P2/etc. instead of an available name. Keep direct quotes
+  unchanged. The tool adds a roster with full names. Use explicit
   speaker labels in a reviewed transcript for attribution. A roster alone does
   not identify voices: leave ownership and attribution unspecified for unlabeled
   passages unless the transcript explicitly identifies them.

@@ -115,6 +115,19 @@ class STTTests(unittest.TestCase):
         self.assertNotIn("```", notes)
         self.assertNotIn("[[", notes)
 
+    def test_notes_use_short_names_without_collapsing_distinct_people(self):
+        speakers = {"P1": "Georg Maerz", "P2": "Ruben Kostandyan",
+                    "P3": "Alex Smith", "P4": "Alex Jones", "P5": "P5 (name not set)"}
+        with patch.object(stt, "request", return_value=self.notes_response("- Topic\n  - TODO Ruben: Send the proposal.\n")) as request:
+            notes = stt.summarize_transcript("P1: Hello. P2: I will send it.", "fake-key", "middle", speakers, "", None)
+        payload = json.loads(request.call_args.kwargs["json"]["messages"][1]["content"])
+        self.assertEqual(payload["participant_labels"], {"P1": "Georg", "P2": "Ruben", "P3": "Alex Smith",
+                                                       "P4": "Alex Jones", "P5": "P5"})
+        self.assertIn("  - Georg Maerz\n", notes)
+        self.assertIn("  - Ruben Kostandyan\n", notes)
+        self.assertNotIn("P1:", notes)
+        self.assertIn("TODO Ruben:", notes)
+
     def test_provider_failures_keep_existing_notes(self):
         previous = "- Existing hand-edited notes\n"
         (self.output / "notes.md").write_text(previous)
