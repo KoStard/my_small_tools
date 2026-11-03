@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from datetime import date, timedelta
 from pathlib import Path
 
 import click
@@ -188,10 +189,41 @@ def participant_labels(speakers: dict[str, str]) -> dict[str, str]:
     return labels
 
 
+def recent_journals(meeting_date: str | None) -> list[dict[str, str]]:
+    """Load the inclusive 30-day window; an empty STT_JOURNAL_DIR opts out."""
+    configured = os.environ.get("STT_JOURNAL_DIR")
+    if configured == "":
+        return []
+    directory = Path(configured).expanduser() if configured is not None else (
+        Path.home() / "Documents/PersonalKnowledgeBase/journals")
+    if not directory.is_dir():
+        if configured is not None:
+            raise click.ClickException(f"Journal directory does not exist: {directory}")
+        return []
+    end = date.fromisoformat(meeting_date) if meeting_date else date.today()
+    start = end - timedelta(days=29)
+    journals = []
+    try:
+        for path in sorted(directory.glob("*.md")):
+            try:
+                day = date.fromisoformat(path.stem.replace("_", "-"))
+            except ValueError:
+                continue
+            if start <= day <= end:
+                journals.append({"date": day.isoformat(), "file": path.name,
+                                 "text": path.read_text(encoding="utf-8")})
+    except (OSError, UnicodeError) as exc:
+        raise click.ClickException(f"Could not read journal context: {exc}") from exc
+    if journals:
+        click.echo(f"Including {len(journals)} journal files ({start} through {end}) in notes context.", err=True)
+    return journals
+
+
 def summarize_transcript(text: str, api_key: str, profile: str,
                          speakers: dict[str, str], context: str, meeting_date: str | None) -> str:
     rules = Path(__file__).with_name("stt_notes.md").read_text(encoding="utf-8")
     labels = participant_labels(speakers)
+    journals = recent_journals(meeting_date)
     response = request("chat/completions", api_key, json={
         "model": SUMMARY_MODEL,
         "temperature": 0,
@@ -199,7 +231,7 @@ def summarize_transcript(text: str, api_key: str, profile: str,
             {"role": "system", "content": rules + "\nLength profile: " + PROFILES[profile]},
             {"role": "user", "content": json.dumps({
                 "participants": speakers, "participant_labels": labels, "meeting_date": meeting_date,
-                "background": context, "transcript": text,
+                "background": context, "recent_journals": journals, "transcript": text,
             }, ensure_ascii=False)},
         ],
     })
@@ -232,7 +264,7 @@ def summarize_transcript(text: str, api_key: str, profile: str,
 @click.option("--output-dir", "-o", type=click.Path(file_okay=False, path_type=Path),
               help="Output folder; default: <audio-stem>.stt beside the recording.")
 @click.option("--speaker", multiple=True, help="Participant name; repeat to assign P1, P2, etc. Does not identify voices.")
-@click.option("--context", default="", help="Optional meeting background, roles, or terminology for notes.")
+@click.option("--context", default="", help="Additional meeting background; recent journals are included automatically (STT_JOURNAL_DIR overrides; empty disables).")
 @click.option("--meeting-date", type=click.DateTime(formats=["%Y-%m-%d"]), help="Actual meeting date (YYYY-MM-DD), not the file date.")
 @click.option("--language", help="Optional ISO-639-1 transcription language, e.g. en. Default: auto-detect.")
 @click.option("--force", is_flag=True, help="Discard previous transcription checkpoint and notes and transcribe again.")

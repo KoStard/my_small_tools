@@ -21,6 +21,9 @@ class STTTests(unittest.TestCase):
         self.audio.write_bytes(b"audio-fixture")
         self.output = self.root / "meeting.stt"
         self.output.mkdir()
+        self.journal_env = patch.dict("os.environ", {"STT_JOURNAL_DIR": ""})
+        self.journal_env.start()
+        self.addCleanup(self.journal_env.stop)
 
     def tearDown(self):
         self.temporary.cleanup()
@@ -91,6 +94,30 @@ class STTTests(unittest.TestCase):
 
     def notes_response(self, content="- Launch\n  - TODO Send the proposal by Friday.\n", finish="stop"):
         return {"choices": [{"finish_reason": finish, "message": {"content": content}}]}
+
+    def test_journals_window_and_request_payload(self):
+        journals = self.root / "journals"
+        journals.mkdir()
+        for name in ("2026_10_04", "2026_10_05", "2026_11_03", "2026_11_04", "misc"):
+            (journals / f"{name}.md").write_text(f"Context {name}")
+        with patch.dict("os.environ", {"STT_JOURNAL_DIR": str(journals)}), \
+             patch.object(stt, "request", return_value=self.notes_response()) as request:
+            stt.summarize_transcript("Meeting", "fake", "middle", {}, "", "2026-11-03")
+        data = json.loads(request.call_args.kwargs["json"]["messages"][1]["content"])
+        self.assertEqual([item["date"] for item in data["recent_journals"]],
+                         ["2026-10-05", "2026-11-03"])
+        self.assertEqual(data["recent_journals"][0]["text"], "Context 2026_10_05")
+        self.assertEqual(data["transcript"], "Meeting")
+
+    def test_journals_disabled_missing_and_unreadable(self):
+        self.assertEqual(stt.recent_journals(None), [])
+        with patch.dict("os.environ", {"STT_JOURNAL_DIR": str(self.root / "missing")}):
+            with self.assertRaises(click.ClickException):
+                stt.recent_journals(None)
+        (self.root / "2026_11_03.md").write_bytes(b"\xff")
+        with patch.dict("os.environ", {"STT_JOURNAL_DIR": str(self.root)}):
+            with self.assertRaises(click.ClickException):
+                stt.recent_journals("2026-11-03")
 
     def test_summary_uses_one_call_full_transcript_and_no_token_cap(self):
         transcript = "A long transcript. " * 5000

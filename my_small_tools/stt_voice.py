@@ -443,6 +443,8 @@ def notes(session, profile, context, meeting_date):
 
     Reuses transcription. Requires OPENROUTER_API_KEY; notes generation incurs
     the normal model charge. Previous notes are retained if generation fails.
+    Includes the last 30 days of local journals in the OpenRouter request.
+    STT_JOURNAL_DIR overrides the journal folder; empty disables journal context.
     """
     state = session.snapshot()
     if profile is not None or context is not None or meeting_date is not None:

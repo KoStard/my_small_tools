@@ -90,6 +90,16 @@ targets at most 100 words, while long retains substantive reasoning and detail.
 These are generation instructions, not truncation limits. Incidental discussion,
 routine status updates and illustrative analogies are omitted unless needed.
 Previous notes survive generation failures. Confirmed names always take precedence.
+All notes generation (CLI and web) automatically includes every dated Markdown
+journal in `~/Documents/PersonalKnowledgeBase/journals` from the meeting date and
+29 preceding days, or through today when no meeting date is set. Both
+`YYYY_MM_DD.md` and `YYYY-MM-DD.md` filenames work. These journal contents are sent
+to Sonnet through OpenRouter along with the transcript; the CLI reports the file
+count and date window. Journals clarify names and priorities, while the transcript
+determines meeting outcomes. Existing summaries in journals are not independent
+evidence. Set `STT_JOURNAL_DIR` to another directory, or an empty string to disable
+journal context. A missing default directory means no journal context; an explicit
+invalid directory or unreadable journal fails before the API request.
 Notes use first names in the discussion when unambiguous, full names when first
 names collide, and speaker IDs only for unnamed people; the People roster keeps
 full names.
@@ -354,7 +364,7 @@ uv run stt meeting.m4a --summarize --speaker Ruben --speaker Alice \
 
 Set `OPENROUTER_API_KEY` in the environment. Audio goes to
 `openai/whisper-large-v3-turbo` on OpenRouter; optional notes use
-`anthropic/claude-haiku-5.5`. API calls consume your OpenRouter credits.
+`anthropic/claude-sonnet-5.5`. API calls consume your OpenRouter credits.
 
 By default, outputs live beside the recording in `<audio-stem>.stt/`:
 
