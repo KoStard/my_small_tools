@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from datetime import date, timedelta
 from pathlib import Path
 
 import click
@@ -16,7 +17,7 @@ import requests
 
 BASE_URL = "https://openrouter.ai/api/v1"
 TRANSCRIPTION_MODEL = "openai/whisper-large-v3-turbo"
-SUMMARY_MODEL = "anthropic/claude-haiku-5.5"
+SUMMARY_MODEL = "anthropic/claude-sonnet-5.5"
 CHUNK_SECONDS = 2 * 60 * 60
 OVERLAP_SECONDS = 2
 MAX_MULTIPART_BYTES = 25_000_000
@@ -24,9 +25,9 @@ FORMATS = {"wav", "mp3", "flac", "m4a", "ogg", "webm", "aac"}
 
 
 PROFILES = {
-    "short": "Compact notes: compress discussion to the essential context and outcomes.",
-    "middle": "Balanced notes: include important reasoning, constraints, tradeoffs and dependencies.",
-    "long": "Detailed notes: include substantive discussion, examples, alternatives and disagreements.",
+    "short": "Brief notes: at most 100 words, 2 topics and 4 child bullets. Keep only essential outcomes and concrete next steps.",
+    "middle": "Concise notes: at most 180 words, 3 topics and 6 child bullets total. Each child bullet should be 10–25 words. Keep main takeaways and concrete next steps; omit secondary discussion.",
+    "long": "Detailed notes: include substantive reasoning, constraints, alternatives and disagreements without repeating the conversation.",
 }
 
 
@@ -172,17 +173,65 @@ def transcribe(source: Path, output: Path, api_key: str, language: str | None,
     return text
 
 
+def participant_labels(speakers: dict[str, str]) -> dict[str, str]:
+    """Prefer first names, preserving identity when first names are shared."""
+    known = {key: name.strip() for key, name in speakers.items()
+             if name.strip() and name.strip() != "name not set"
+             and not re.fullmatch(r"P\d+ \(name not set\)", name.strip())}
+    first_names = [name.split()[0].casefold() for name in known.values()]
+    labels = {}
+    for key in speakers:
+        if key not in known:
+            labels[key] = key
+        else:
+            first = known[key].split()[0]
+            labels[key] = first if first_names.count(first.casefold()) == 1 else known[key]
+    return labels
+
+
+def recent_journals(meeting_date: str | None) -> list[dict[str, str]]:
+    """Load the inclusive 30-day window; an empty STT_JOURNAL_DIR opts out."""
+    configured = os.environ.get("STT_JOURNAL_DIR")
+    if configured == "":
+        return []
+    directory = Path(configured).expanduser() if configured is not None else (
+        Path.home() / "Documents/PersonalKnowledgeBase/journals")
+    if not directory.is_dir():
+        if configured is not None:
+            raise click.ClickException(f"Journal directory does not exist: {directory}")
+        return []
+    end = date.fromisoformat(meeting_date) if meeting_date else date.today()
+    start = end - timedelta(days=29)
+    journals = []
+    try:
+        for path in sorted(directory.glob("*.md")):
+            try:
+                day = date.fromisoformat(path.stem.replace("_", "-"))
+            except ValueError:
+                continue
+            if start <= day <= end:
+                journals.append({"date": day.isoformat(), "file": path.name,
+                                 "text": path.read_text(encoding="utf-8")})
+    except (OSError, UnicodeError) as exc:
+        raise click.ClickException(f"Could not read journal context: {exc}") from exc
+    if journals:
+        click.echo(f"Including {len(journals)} journal files ({start} through {end}) in notes context.", err=True)
+    return journals
+
+
 def summarize_transcript(text: str, api_key: str, profile: str,
                          speakers: dict[str, str], context: str, meeting_date: str | None) -> str:
     rules = Path(__file__).with_name("stt_notes.md").read_text(encoding="utf-8")
+    labels = participant_labels(speakers)
+    journals = recent_journals(meeting_date)
     response = request("chat/completions", api_key, json={
         "model": SUMMARY_MODEL,
         "temperature": 0,
         "messages": [
             {"role": "system", "content": rules + "\nLength profile: " + PROFILES[profile]},
             {"role": "user", "content": json.dumps({
-                "participants": speakers, "meeting_date": meeting_date,
-                "background": context, "transcript": text,
+                "participants": speakers, "participant_labels": labels, "meeting_date": meeting_date,
+                "background": context, "recent_journals": journals, "transcript": text,
             }, ensure_ascii=False)},
         ],
     })
@@ -201,7 +250,8 @@ def summarize_transcript(text: str, api_key: str, profile: str,
     if content.startswith("```") and content.endswith("```"):
         content = "\n".join(content.splitlines()[1:-1]).strip()
     content = content.replace("[[", "").replace("]]", "")
-    header = ["- People", *(f"  - {identifier}: {name}" for identifier, name in speakers.items())]
+    header = ["- People", *(f"  - {name}" if labels[identifier] != identifier
+                            else f"  - {identifier}: {name}" for identifier, name in speakers.items())]
     if meeting_date:
         header.append(f"- Meeting date: {meeting_date}")
     return "\n".join(header) + "\n" + content + "\n"
@@ -214,24 +264,35 @@ def summarize_transcript(text: str, api_key: str, profile: str,
 @click.option("--output-dir", "-o", type=click.Path(file_okay=False, path_type=Path),
               help="Output folder; default: <audio-stem>.stt beside the recording.")
 @click.option("--speaker", multiple=True, help="Participant name; repeat to assign P1, P2, etc. Does not identify voices.")
-@click.option("--context", default="", help="Optional meeting background, roles, or terminology for notes.")
+@click.option("--context", default="", help="Additional meeting background; recent journals are included automatically (STT_JOURNAL_DIR overrides; empty disables).")
 @click.option("--meeting-date", type=click.DateTime(formats=["%Y-%m-%d"]), help="Actual meeting date (YYYY-MM-DD), not the file date.")
 @click.option("--language", help="Optional ISO-639-1 transcription language, e.g. en. Default: auto-detect.")
 @click.option("--force", is_flag=True, help="Discard previous transcription checkpoint and notes and transcribe again.")
+@click.option("--review", is_flag=True, help="Open local speaker review with playback, corrections, and notes (Deepgram Nova-3).")
+@click.option("--transcript-json", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+              help="With --review, import an existing diarized response without a transcription charge.")
+@click.option("--port", default=0, type=click.IntRange(0, 65535), help="Local review port; 0 selects a free port.")
+@click.option("--no-open", is_flag=True, help="Print the review URL without opening a browser.")
 def main(audio: Path, summarize: str | None, output_dir: Path | None, speaker: tuple[str, ...],
-         context: str, meeting_date, language: str | None, force: bool):
+         context: str, meeting_date, language: str | None, force: bool, review: bool,
+         transcript_json: Path | None, port: int, no_open: bool):
     """Transcribe AUDIO using OPENROUTER_API_KEY from the environment.
 
     Saves transcript.txt and a resumable state.json. --summarize also writes
     notes.md (nested bullets and TODOs, no wiki links). Reruns reuse the saved
     transcript, including manual corrections, and regenerate notes.
 
+    --review opens a local browser for speaker naming, audio playback, and
+    correcting passages before generating notes. New reviews use Deepgram
+    Nova-3; --transcript-json imports an existing diarized response. Review
+    edits live in <audio-stem>.review and reopen without retranscription.
+
     Install ffmpeg and ffprobe for automatic two-hour audio chunks and format
     conversion. Without them, supported files under 25 MB upload directly.
     Chunk labels mark approximate starts, not word or speaker timestamps.
     """
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if not api_key:
+    if not api_key and not review:
         raise click.ClickException("Set OPENROUTER_API_KEY in your environment.")
     if audio.stat().st_size == 0:
         raise click.ClickException("Audio file is empty.")
@@ -239,6 +300,19 @@ def main(audio: Path, summarize: str | None, output_dir: Path | None, speaker: t
         raise click.ClickException("--language must be a two-letter ISO-639-1 code.")
     if any(not name.strip() for name in speaker):
         raise click.ClickException("--speaker names must not be empty.")
+    if not review and (transcript_json or port or no_open):
+        raise click.ClickException("--transcript-json, --port and --no-open require --review.")
+    if review:
+        if force or summarize:
+            raise click.ClickException("Review saves corrections; generate notes in the page. Use a new -o directory for a fresh transcription.")
+        from my_small_tools.stt_review import launch
+        try:
+            launch(audio, output_dir or audio.with_name(f"{audio.stem}.review"), transcript_json,
+                   language, speaker, context, meeting_date.strftime("%Y-%m-%d") if meeting_date else None,
+                   port, not no_open)
+        except (OSError, ValueError, KeyError, TypeError, requests.RequestException) as exc:
+            raise click.ClickException(f"Review failed ({type(exc).__name__}); check recording, JSON, output folder, and port.") from exc
+        return
     output = (output_dir or audio.with_name(f"{audio.stem}.stt")).resolve()
     try:
         output.mkdir(parents=True, exist_ok=True)

@@ -1,5 +1,153 @@
 # My small tools
 
+## Review a recorded conversation
+
+```bash
+uv run stt "/path/to/meeting.m4a" --review
+# Reuse an existing full-recording, speaker-labeled API response:
+uv run stt "/path/to/meeting.m4a" --review --transcript-json "/path/to/response.json"
+```
+
+The local page plays a sample of each voice so you can assign names. Each
+timestamped turn has playback, an editable transcript and a speaker selector.
+Place the text cursor at a voice change and choose **Split at cursor** to correct
+part of a turn; listen around the estimated split time and adjust it before
+splitting. Use **Undo** to reverse edits in the current tab. **Save changes**
+(Cmd/Ctrl+S) writes corrections locally; the page warns before leaving with
+unsaved changes. **Save & generate notes** uses the saved corrections and names
+to write the existing topic-based LogSeq format, with selectable detail, date
+and background. Notes are marked stale after further edits.
+
+Reviews are stored beside the recording in `<audio-stem>.review` (override with
+`-o`). Rerun the same command to reopen saved edits without retranscription.
+The folder contains original `provider.json`, source identity `recording.json`,
+editable `review.json`, readable `transcript.txt`, and generated `notes.md`.
+Imports must belong to the supplied recording with timestamps relative to its
+start; an import initializes a new review and never replaces existing edits.
+Speaker identifiers P1/P2 follow first appearance; names supplied by `--speaker`
+initialize that order in a new review and should be checked by listening.
+
+New reviews transcribe with Deepgram Nova-3 through OpenRouter using
+`OPENROUTER_API_KEY`; imports and saved reviews can open without a key. Generating
+notes also uses OpenRouter and incurs normal model charges. The browser receives
+no API credentials, and playback/editing stays on a loopback-only local server.
+The random local URL changes on each launch. Keep the command running; Ctrl+C
+closes it. Use `--no-open` to print the URL without opening a browser, or
+`--port N` to choose a port.
+
+Supported audio under 25 MB uploads directly. Install `ffmpeg` for conversion or
+compression of other files; compressed audio must still fit under 25 MB. Review
+does not split long recordings and equate independent speaker IDs. Browser audio
+support varies by format; MP3 and M4A are convenient for playback. The original
+plain `stt AUDIO [--summarize]` workflow continues to use Whisper.
+
+### Remember speakers locally
+
+The browser and `stt-voice` CLI use the same profiles and review data. Adding a
+person does not replace your personal voice profile. Enter a name and click
+**Remember speaker**, or use the terminal:
+
+```bash
+uv run stt-voice speakers "/path/to/meeting.m4a"
+uv run stt-voice remember "/path/to/meeting.m4a" --speaker P1 --name "Alice"
+uv run stt-voice remember "/path/to/meeting.m4a" --speaker P2 --name "My Name" --me
+uv run stt-voice list --json
+uv run stt-voice match "/path/to/meeting.m4a" --json
+```
+
+These commands require a saved review; use `--transcript-json response.json`
+on a recording command to initialize one without buying another transcription.
+Use `-o` for a nondefault review folder. `speakers` lists recording-local IDs
+and sample intervals (`--json` includes exact times); `list` shows stable saved
+profile IDs and metadata without embeddings. The CLI does not open a browser.
+
+`remember` creates a new person by default; `--me` explicitly updates your
+personal profile. Use `--profile-id ID` to update a particular existing person
+instead (the UI provides an **Update NAME** selector). Duplicate names and
+unknown update IDs are rejected rather than silently replacing someone.
+
+```bash
+uv run stt-voice remember "/path/to/meeting.m4a" --speaker P1 --name "Alice" --profile-id PROFILE_ID
+uv run stt-voice name "/path/to/meeting.m4a" --speaker P1 --name "Alice"
+uv run stt-voice dismiss "/path/to/meeting.m4a" --speaker P2
+uv run stt-voice match "/path/to/meeting.m4a" --reset-dismissed --json
+uv run stt-voice forget PROFILE_ID
+uv run stt-voice notes "/path/to/meeting.m4a" --profile middle
+```
+
+`name` assigns or clears a transcript name without retraining any profile;
+`dismiss` rejects suggestions for that recording's speaker. Matching is read-only
+unless you request `--reset-dismissed`, which clears prior rejections; it never
+assigns a name or learns automatically. In JSON, `status` is `suggested`,
+`unsure`, or `no_match`, and `choices` contains plausible remembered people.
+`notes` generates the existing LogSeq format from saved speaker names and
+corrected passages without retranscribing; it uses the saved detail setting,
+background and date unless overridden with `--profile`, `--context` or
+`--meeting-date`. It requires OPENROUTER_API_KEY and incurs a notes-model charge.
+Notes use Claude Sonnet 5.5. The default balanced profile selects the main
+takeaways and next steps, targeting at most 180 words in three topics; short
+targets at most 100 words, while long retains substantive reasoning and detail.
+These are generation instructions, not truncation limits. Incidental discussion,
+routine status updates and illustrative analogies are omitted unless needed.
+Previous notes survive generation failures. Confirmed names always take precedence.
+All notes generation (CLI and web) automatically includes every dated Markdown
+journal in `~/Documents/PersonalKnowledgeBase/journals` from the meeting date and
+29 preceding days, or through today when no meeting date is set. Both
+`YYYY_MM_DD.md` and `YYYY-MM-DD.md` filenames work. These journal contents are sent
+to Sonnet through OpenRouter along with the transcript; the CLI reports the file
+count and date window. Journals clarify names and priorities, while the transcript
+determines meeting outcomes. Existing summaries in journals are not independent
+evidence. Set `STT_JOURNAL_DIR` to another directory, or an empty string to disable
+journal context. A missing default directory means no journal context; an explicit
+invalid directory or unreadable journal fails before the API request.
+Notes use first names in the discussion when unambiguous, full names when first
+names collide, and speaker IDs only for unnamed people; the People roster keeps
+full names.
+CLI and browser writes use a shared file lock and revision checks; reload an
+open browser after CLI corrections.
+
+The UI offers **Sounds like NAME** for a clear candidate, **Is this NAME?** when
+uncertain, or **Which person is this?** when several identities fit. You can
+choose a name or **None of these**. Rejections are saved with the review;
+**Check remembered voices** reconsiders them after corrections. **This is me**
+still updates your personal profile. **Forget** next to a remembered person
+removes only their signature, keeping other profiles and saved transcript names.
+Enrollment saves immediately; ordinary name assignments and rejections use
+**Save changes**. Suggestions never overwrite entered names or retrain profiles.
+
+Voice recognition requires `ffmpeg`, `onnxruntime`, `kaldi-native-fbank`, and
+`numpy` (the Python packages are project dependencies). On first use it
+downloads the official 26.5 MB WeSpeaker ResNet34-LM model with a pinned revision
+and checksum, then runs inference on the CPU. The download contains only model
+weights; no recording, audio snippet, transcript, or voice embedding is sent
+away for voice matching. This is separate from the existing remote transcription
+and notes APIs. Future matching works offline once the model is downloaded.
+
+Voice memory lives under `appdirs.user_data_dir("my_small_tools")/voice/`; your
+personal profile remains `me.json`, and other people use `people/<profile-id>.json`
+(macOS: `~/Library/Application Support/my_small_tools/voice/`), with
+owner-only file permissions. It stores your display name, several 256-value
+voice embeddings, a matching threshold, calibration statistics and the enrollment
+recording's hash; it does not copy or save audio snippets. Treat these files as
+personal data. Model weights are stored in the same directory. The page and CLI listing see
+only metadata and suggested names, never profile vectors. Actual profiles live
+outside the repository; `.gitignore` also excludes `*.review/`, `.stt-voices/`,
+`voice-profiles/`, and a root-level `voice/` folder for private local copies.
+Arbitrary JSON files or audio copied elsewhere are not automatically ignored.
+
+The model uses cosine similarity, not a probability of identity. A suggestion
+requires at least three consistent samples, adequate enrollment separation,
+and only one clearly matching speaker cluster; borderline or ambiguous matches
+ask instead. This is a convenience for reviewing recordings, not authentication.
+Different microphones, noise, overlapping speech and incorrect diarization can
+still affect it; confirm suggestions by listening.
+
+Model: [WeSpeaker ResNet34-LM](https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM),
+trained on VoxCeleb2 Dev and licensed CC BY 4.0; revision
+`f0c48c298fd835726c27956a5d617bad7115627e`. See the
+[WeSpeaker project](https://github.com/wenet-e2e/wespeaker) for its paper,
+feature extraction and ONNX verification examples.
+
 ## Copy to an SSH target
 
 ```bash
@@ -216,7 +364,7 @@ uv run stt meeting.m4a --summarize --speaker Ruben --speaker Alice \
 
 Set `OPENROUTER_API_KEY` in the environment. Audio goes to
 `openai/whisper-large-v3-turbo` on OpenRouter; optional notes use
-`anthropic/claude-haiku-5.5`. API calls consume your OpenRouter credits.
+`anthropic/claude-sonnet-5.5`. API calls consume your OpenRouter credits.
 
 By default, outputs live beside the recording in `<audio-stem>.stt/`:
 

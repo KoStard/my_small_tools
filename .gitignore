@@ -1,3 +1,9 @@
+# Private local STT sessions and voice-profile backups
+*.review/
+.stt-voices/
+voice-profiles/
+/voice/
+
 # Python-generated files
 __pycache__/
 *.py[oc]
