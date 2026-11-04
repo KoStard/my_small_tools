@@ -36,7 +36,7 @@ Registered entry points (`pyproject.toml`):
 - `uv run youtube-transcribe ...`
 - `uv run stt <audio-file> [--summarize]`
 - `uv run stt-voice {list,speakers,remember,match,name,dismiss,forget,notes} ...`: headless voice profile and review-name management; `--json` on list/speakers/match, `--me` or `--profile-id` for explicit enrollment updates.
-- `uv run stt <audio-file> --review [--transcript-json <diarized-response.json>]`: local playback, naming, corrections and notes; rerun to reopen saved edits. Outputs default to `/tmp/stt/<stem>.{stt,review}` (not beside the recording); `-o` overrides. `--port N` chooses a port; `--no-open` prints the URL.
+- `uv run stt <audio-file> --review [--transcript-json <diarized-response.json>]`: local playback, naming, corrections and notes; rerun to reopen saved edits. Outputs default to `/tmp/stt/<stem>.{stt,review}` (not beside the recording); a different recording with the same name gets `<stem> 2.…` automatically; `-o` overrides. Recordings are matched by an ffmpeg hash of the audio packets, so Voice Memos re-exports (new metadata) reuse saved work. `--port N` chooses a port; `--no-open` prints the URL.
 
 Unregistered scripts (run by path):
 - `uv run my_small_tools/text_to_speech.py ...`

@@ -49,9 +49,57 @@ class SummaryCommand(click.Command):
 OUTPUT_ROOT = Path("/tmp/stt") if os.name == "posix" else Path(tempfile.gettempdir()) / "stt"
 
 
-def default_output(audio: Path, suffix: str) -> Path:
+def default_output(audio: Path, suffix: str, attempt: int = 1) -> Path:
     """Keep outputs out of the recording's folder (e.g. Voice Memos temp dirs)."""
-    return OUTPUT_ROOT / f"{audio.stem}{suffix}"
+    return OUTPUT_ROOT / (f"{audio.stem}{suffix}" if attempt == 1 else f"{audio.stem} {attempt}{suffix}")
+
+
+class RecordingMismatch(click.ClickException):
+    """The output folder belongs to a different recording or settings."""
+
+
+def recording_identity(path: Path) -> dict:
+    """File hash plus, with ffmpeg, a hash of the encoded audio packets.
+
+    Voice Memos rewrites container metadata on every export, so the file hash
+    changes while the audio stays identical; the packet hash does not.
+    """
+    with path.open("rb") as handle:
+        identity = {"sha256": hashlib.file_digest(handle, "sha256").hexdigest()}
+    if shutil.which("ffmpeg"):
+        result = subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-i", str(path), "-map", "0:a:0",
+                                 "-c", "copy", "-f", "hash", "-hash", "sha256", "-"],
+                                capture_output=True, text=True, check=False)
+        if result.returncode == 0 and result.stdout.startswith("SHA256="):
+            identity["audio_sha256"] = result.stdout.strip().split("=", 1)[1]
+    return identity
+
+
+def probe_duration(path: Path) -> float | None:
+    if not shutil.which("ffprobe"):
+        return None
+    result = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                             "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+                            capture_output=True, text=True, check=False)
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        return None
+
+
+def same_recording(saved: dict, current: dict, keys, saved_duration=None, path: Path | None = None) -> bool:
+    """Match settings exactly and the recording by audio, file hash, or (legacy) duration."""
+    if any(saved.get(key) != current.get(key) for key in keys):
+        return False
+    if saved.get("audio_sha256") and current.get("audio_sha256"):
+        return saved["audio_sha256"] == current["audio_sha256"]
+    if saved.get("sha256") == current.get("sha256"):
+        return True
+    # Reviews saved before audio hashing only know the file hash; accept a re-export of equal length.
+    if not saved.get("audio_sha256") and saved_duration and path is not None:
+        duration = probe_duration(path)
+        return duration is not None and abs(duration - saved_duration) < 1.0
+    return False
 
 
 def save(path: Path, content: str) -> None:
@@ -115,9 +163,7 @@ def audio_parts(source: Path, directory: Path):
 
 def transcribe(source: Path, output: Path, api_key: str, language: str | None,
                force: bool) -> str:
-    with source.open("rb") as handle:
-        digest = hashlib.file_digest(handle, "sha256").hexdigest()
-    signature = {"sha256": digest, "model": TRANSCRIPTION_MODEL,
+    signature = {**recording_identity(source), "model": TRANSCRIPTION_MODEL,
                  "language": language, "chunk_seconds": CHUNK_SECONDS,
                  "overlap_seconds": OVERLAP_SECONDS,
                  "split": bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))}
@@ -126,13 +172,15 @@ def transcribe(source: Path, output: Path, api_key: str, language: str | None,
     state = {"signature": signature, "chunks": [], "complete": False}
     if state_path.exists() and not force:
         state = json.loads(state_path.read_text(encoding="utf-8"))
-        identity = ("sha256", "model", "language")
-        same_recording = all(state.get("signature", {}).get(key) == signature[key] for key in identity)
-        if state.get("complete") and transcript_path.exists() and same_recording:
+        saved = state.get("signature", {})
+        if not same_recording(saved, signature, ("model", "language")):
+            raise RecordingMismatch("Recording or transcription settings changed. Use another -o directory or --force.")
+        if state.get("complete") and transcript_path.exists():
             click.echo("Reusing transcript (including any edits).", err=True)
             return transcript_path.read_text(encoding="utf-8")
-        if state.get("signature") != signature:
-            raise click.ClickException("Recording or transcription settings changed. Use another -o directory or --force.")
+        if any(saved.get(key) != signature[key] for key in signature if key not in ("sha256", "audio_sha256")):
+            raise RecordingMismatch("Transcription settings changed. Use another -o directory or --force.")
+        state["signature"] = signature
     elif not force and any(output.iterdir()):
         raise click.ClickException("Output directory contains files without a checkpoint. Use another -o directory or --force.")
     if force:
@@ -328,16 +376,31 @@ def main(audio: Path, summarize: str | None, output_dir: Path | None, speaker: t
                 f"Review needs the '{exc.name}' package, which this install is missing. Reinstall the tool "
                 "so new dependencies are picked up, e.g. `uv tool install --reinstall --editable <repo>`.") from exc
         try:
-            launch(audio, output_dir or default_output(audio, ".review"), transcript_json,
-                   language, speaker, context, meeting_date.strftime("%Y-%m-%d") if meeting_date else None,
-                   port, not no_open, summarize)
+            for attempt in range(1, 100):
+                try:
+                    launch(audio, output_dir or default_output(audio, ".review", attempt), transcript_json,
+                           language, speaker, context, meeting_date.strftime("%Y-%m-%d") if meeting_date else None,
+                           port, not no_open, summarize)
+                    break
+                except RecordingMismatch:
+                    if output_dir:
+                        raise
+                    click.echo(f"{default_output(audio, '.review', attempt)} holds a different recording; "
+                               "trying the next folder.", err=True)
         except (OSError, ValueError, KeyError, TypeError, requests.RequestException) as exc:
             raise click.ClickException(f"Review failed ({type(exc).__name__}); check recording, JSON, output folder, and port.") from exc
         return
-    output = (output_dir or default_output(audio, ".stt")).resolve()
     try:
-        output.mkdir(parents=True, exist_ok=True)
-        transcript = transcribe(audio.resolve(), output, api_key, language, force)
+        for attempt in range(1, 100):
+            output = (output_dir or default_output(audio, ".stt", attempt)).resolve()
+            output.mkdir(parents=True, exist_ok=True)
+            try:
+                transcript = transcribe(audio.resolve(), output, api_key, language, force)
+                break
+            except RecordingMismatch:
+                if output_dir:
+                    raise
+                click.echo(f"{output} holds a different recording; trying the next folder.", err=True)
         click.echo(f"Transcript: {output / 'transcript.txt'}")
         if summarize:
             if not transcript.strip():

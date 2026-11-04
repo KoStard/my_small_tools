@@ -39,6 +39,9 @@ def transcript(state):
     ) + "\n"
 
 
+SETTINGS = ("model", "language", "provider")
+
+
 def initial_state(raw, signature):
     if not isinstance(raw, dict):
         raise click.ClickException("Import a JSON object containing speaker-labeled segments.")
@@ -129,9 +132,7 @@ class ReviewSession:
         self.voice_memory = voice_memory if voice_memory is not None else VoiceMemory()
         self.audio, self.output = audio.resolve(), output.resolve()
         self.lock = threading.Lock()
-        with self.audio.open("rb") as handle:
-            digest = hashlib.file_digest(handle, "sha256").hexdigest()
-        signature = {"sha256": digest, "model": MODEL, "language": language, "provider": OPTIONS}
+        signature = {**stt.recording_identity(self.audio), "model": MODEL, "language": language, "provider": OPTIONS}
         self.path = self.output / "review.json"
         self.output.mkdir(parents=True, exist_ok=True)
         self.disk_lock = FileLock(str(self.output / "review.lock"), timeout=180)
@@ -141,20 +142,27 @@ class ReviewSession:
     def load_or_create(self, signature, imported, language, speakers, context, meeting_date):
         if self.path.exists():
             self.state = json.loads(self.path.read_text(encoding="utf-8"))
-            if self.state.get("signature") != signature:
-                raise click.ClickException("Recording or review settings changed; choose another output directory.")
+            if not stt.same_recording(self.state.get("signature", {}), signature, SETTINGS,
+                                      self.state.get("duration"), self.audio):
+                raise stt.RecordingMismatch("Recording or review settings changed; choose another output directory.")
+            if self.state["signature"] != signature:
+                # Same audio re-exported (new metadata): remember the new file identity.
+                self.state["signature"] = signature
+                stt.save(self.output / "recording.json", json.dumps(signature, ensure_ascii=False, indent=2))
             validate_edits(self.state, self.state)
             self.persist()
         else:
             raw_path = self.output / "provider.json"
             signature_path = self.output / "recording.json"
             if raw_path.exists():
-                if not signature_path.exists() or json.loads(signature_path.read_text()) != signature:
-                    raise click.ClickException("Saved provider output belongs to different settings; choose another directory.")
+                if not signature_path.exists() or not stt.same_recording(
+                        json.loads(signature_path.read_text()), signature, SETTINGS):
+                    raise stt.RecordingMismatch("Saved provider output belongs to different settings; choose another directory.")
+                stt.save(signature_path, json.dumps(signature, ensure_ascii=False, indent=2))
                 raw = json.loads(raw_path.read_text(encoding="utf-8"))
             else:
                 if any(path.name != "review.lock" for path in self.output.iterdir()):
-                    raise click.ClickException("Choose an empty output directory for a new review.")
+                    raise stt.RecordingMismatch("Choose an empty output directory for a new review.")
                 raw = json.loads(imported.read_text(encoding="utf-8")) if imported else self.transcribe(language)
                 # Store source identity first: a crash can never make raw output look reusable for another source.
                 stt.save(signature_path, json.dumps(signature, ensure_ascii=False, indent=2))

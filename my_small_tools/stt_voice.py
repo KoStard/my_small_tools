@@ -22,7 +22,7 @@ import click
 import numpy as np
 import requests
 
-from my_small_tools.stt import OUTPUT_ROOT, default_output, save
+from my_small_tools.stt import OUTPUT_ROOT, RecordingMismatch, default_output, save
 
 MODEL_REVISION = "f0c48c298fd835726c27956a5d617bad7115627e"
 MODEL_SHA256 = "7bb2f06e9df17cdf1ef14ee8a15ab08ed28e8d0ef5054ee135741560df2ec068"
@@ -305,13 +305,19 @@ def review_command(function):
     @wraps(function)
     def wrapped(audio, output_dir, transcript_json, **kwargs):
         from my_small_tools.stt_review import ReviewSession
-        output = output_dir or default_output(audio, ".review")
-        checkpoint = output / "review.json"
-        if not checkpoint.exists() and transcript_json is None:
-            raise click.ClickException("No saved review. Run stt AUDIO --review or supply --transcript-json; this command never buys a transcription.")
         try:
-            language = json.loads(checkpoint.read_text())["signature"].get("language") if checkpoint.exists() else None
-            session = ReviewSession(audio, output, transcript_json, language=language)
+            for attempt in range(1, 100):
+                output = output_dir or default_output(audio, ".review", attempt)
+                checkpoint = output / "review.json"
+                if not checkpoint.exists() and transcript_json is None:
+                    raise click.ClickException("No saved review. Run stt AUDIO --review or supply --transcript-json; this command never buys a transcription.")
+                language = json.loads(checkpoint.read_text())["signature"].get("language") if checkpoint.exists() else None
+                try:
+                    session = ReviewSession(audio, output, transcript_json, language=language)
+                    break
+                except RecordingMismatch:
+                    if output_dir:
+                        raise
             return function(session=session, **kwargs)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             raise click.ClickException(f"Voice command failed ({type(exc).__name__}); saved review and profiles are retained.") from exc
