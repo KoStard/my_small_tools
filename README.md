@@ -18,8 +18,8 @@ unsaved changes. **Save & generate notes** uses the saved corrections and names
 to write the existing topic-based LogSeq format, with selectable detail, date
 and background. Notes are marked stale after further edits.
 
-Reviews are stored beside the recording in `<audio-stem>.review` (override with
-`-o`). Rerun the same command to reopen saved edits without retranscription.
+Reviews are stored in `/tmp/stt/<audio-stem>.review` (override with `-o`); macOS
+clears `/tmp` on reboot, so use `-o` for reviews you want to keep. Rerun the same command to reopen saved edits without retranscription.
 The folder contains original `provider.json`, source identity `recording.json`,
 editable `review.json`, readable `transcript.txt`, and generated `notes.md`.
 Imports must belong to the supplied recording with timestamps relative to its
@@ -366,7 +366,7 @@ Set `OPENROUTER_API_KEY` in the environment. Audio goes to
 `openai/whisper-large-v3-turbo` on OpenRouter; optional notes use
 `anthropic/claude-sonnet-5.5`. API calls consume your OpenRouter credits.
 
-By default, outputs live beside the recording in `<audio-stem>.stt/`:
+By default, outputs live in `/tmp/stt/<audio-stem>.stt/` (cleared on reboot; override with `-o`):
 
 - `transcript.txt`: original-language transcription; long recordings have approximate two-hour start labels.
 - `notes.md`: plain LogSeq topic bullets. Each topic contains its relevant discussion, decisions, facts/dates, quotes, questions, and `TODO` action items. No global action/fact/quote buckets or wiki links.

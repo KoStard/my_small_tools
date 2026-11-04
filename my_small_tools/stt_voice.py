@@ -22,7 +22,7 @@ import click
 import numpy as np
 import requests
 
-from my_small_tools.stt import save
+from my_small_tools.stt import OUTPUT_ROOT, default_output, save
 
 MODEL_REVISION = "f0c48c298fd835726c27956a5d617bad7115627e"
 MODEL_SHA256 = "7bb2f06e9df17cdf1ef14ee8a15ab08ed28e8d0ef5054ee135741560df2ec068"
@@ -299,13 +299,13 @@ def review_command(function):
     """Share a recording selector; import explicitly, never transcribe implicitly."""
     @click.argument("audio", type=click.Path(exists=True, dir_okay=False, path_type=Path))
     @click.option("--output-dir", "-o", type=click.Path(file_okay=False, path_type=Path),
-                  help="Review folder; default: <audio-stem>.review beside the recording.")
+                  help=f"Review folder; default: {OUTPUT_ROOT}/<audio-stem>.review.")
     @click.option("--transcript-json", type=click.Path(exists=True, dir_okay=False, path_type=Path),
                   help="Initialize a review from a full-recording diarized JSON response.")
     @wraps(function)
     def wrapped(audio, output_dir, transcript_json, **kwargs):
         from my_small_tools.stt_review import ReviewSession
-        output = output_dir or audio.with_name(f"{audio.stem}.review")
+        output = output_dir or default_output(audio, ".review")
         checkpoint = output / "review.json"
         if not checkpoint.exists() and transcript_json is None:
             raise click.ClickException("No saved review. Run stt AUDIO --review or supply --transcript-json; this command never buys a transcription.")

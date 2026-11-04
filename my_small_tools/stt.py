@@ -46,6 +46,14 @@ class SummaryCommand(click.Command):
         return super().parse_args(ctx, normalized)
 
 
+OUTPUT_ROOT = Path("/tmp/stt") if os.name == "posix" else Path(tempfile.gettempdir()) / "stt"
+
+
+def default_output(audio: Path, suffix: str) -> Path:
+    """Keep outputs out of the recording's folder (e.g. Voice Memos temp dirs)."""
+    return OUTPUT_ROOT / f"{audio.stem}{suffix}"
+
+
 def save(path: Path, content: str) -> None:
     """Replace atomically so interrupted writes never destroy a checkpoint."""
     with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
@@ -262,7 +270,7 @@ def summarize_transcript(text: str, api_key: str, profile: str,
 @click.option("--summarize", type=click.Choice(list(PROFILES), case_sensitive=False),
               help="Write topic-based LogSeq notes: short, middle, or long. Bare flag uses middle.")
 @click.option("--output-dir", "-o", type=click.Path(file_okay=False, path_type=Path),
-              help="Output folder; default: <audio-stem>.stt beside the recording.")
+              help=f"Output folder; default: {OUTPUT_ROOT}/<audio-stem>.stt (or .review).")
 @click.option("--speaker", multiple=True, help="Participant name; repeat to assign P1, P2, etc. Does not identify voices.")
 @click.option("--context", default="", help="Additional meeting background; recent journals are included automatically (STT_JOURNAL_DIR overrides; empty disables).")
 @click.option("--meeting-date", type=click.DateTime(formats=["%Y-%m-%d"]), help="Actual meeting date (YYYY-MM-DD), not the file date.")
@@ -281,14 +289,14 @@ def main(audio: Path, summarize: str | None, output_dir: Path | None, speaker: t
     \b
     Two separate modes:
       Quick (default)  stt AUDIO [--summarize]
-                       Plain transcript in <audio-stem>.stt/ (no speaker
+                       Plain transcript in /tmp/stt/<stem>.stt/ (no speaker
                        labels); --summarize also writes notes.md. Reruns reuse
                        the saved transcript, including manual edits.
       Review           stt AUDIO --review
                        Speaker-labelled transcript in a local browser page
                        (Deepgram Nova-3): name speakers, fix passages, then
                        click "Save & generate notes". Saved in
-                       <audio-stem>.review/ and reopens without retranscription.
+                       /tmp/stt/<stem>.review/; reopens without retranscription.
                        --summarize and --force do not apply here.
 
     Install ffmpeg and ffprobe for automatic two-hour audio chunks and format
@@ -322,13 +330,13 @@ def main(audio: Path, summarize: str | None, output_dir: Path | None, speaker: t
                 f"Review needs the '{exc.name}' package, which this install is missing. Reinstall the tool "
                 "so new dependencies are picked up, e.g. `uv tool install --reinstall --editable <repo>`.") from exc
         try:
-            launch(audio, output_dir or audio.with_name(f"{audio.stem}.review"), transcript_json,
+            launch(audio, output_dir or default_output(audio, ".review"), transcript_json,
                    language, speaker, context, meeting_date.strftime("%Y-%m-%d") if meeting_date else None,
                    port, not no_open)
         except (OSError, ValueError, KeyError, TypeError, requests.RequestException) as exc:
             raise click.ClickException(f"Review failed ({type(exc).__name__}); check recording, JSON, output folder, and port.") from exc
         return
-    output = (output_dir or audio.with_name(f"{audio.stem}.stt")).resolve()
+    output = (output_dir or default_output(audio, ".stt")).resolve()
     try:
         output.mkdir(parents=True, exist_ok=True)
         transcript = transcribe(audio.resolve(), output, api_key, language, force)
