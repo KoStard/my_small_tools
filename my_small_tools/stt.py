@@ -297,14 +297,16 @@ def main(audio: Path, summarize: str | None, output_dir: Path | None, speaker: t
                        (Deepgram Nova-3): name speakers, fix passages, then
                        click "Save & generate notes". Saved in
                        /tmp/stt/<stem>.review/; reopens without retranscription.
-                       --summarize and --force do not apply here.
+                       --summarize writes notes before the page opens and
+                       shows them; regenerate after renaming speakers.
+                       --force does not apply here.
 
     Install ffmpeg and ffprobe for automatic two-hour audio chunks and format
     conversion. Without them, supported files under 25 MB upload directly.
     Chunk labels mark approximate starts, not word or speaker timestamps.
     """
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if not api_key and not review:
+    if not api_key and (not review or summarize):
         raise click.ClickException("Set OPENROUTER_API_KEY in your environment.")
     if audio.stat().st_size == 0:
         raise click.ClickException("Audio file is empty.")
@@ -315,10 +317,6 @@ def main(audio: Path, summarize: str | None, output_dir: Path | None, speaker: t
     if not review and (transcript_json or port or no_open):
         raise click.ClickException("--transcript-json, --port and --no-open require --review.")
     if review:
-        if summarize:
-            raise click.ClickException(
-                "--summarize does not apply to --review: name speakers in the page, then click "
-                "\"Save & generate notes\" there (or run `stt-voice notes` afterwards). Drop --summarize.")
         if force:
             raise click.ClickException(
                 "--force does not apply to --review, which keeps your corrections. To transcribe again, "
@@ -332,7 +330,7 @@ def main(audio: Path, summarize: str | None, output_dir: Path | None, speaker: t
         try:
             launch(audio, output_dir or default_output(audio, ".review"), transcript_json,
                    language, speaker, context, meeting_date.strftime("%Y-%m-%d") if meeting_date else None,
-                   port, not no_open)
+                   port, not no_open, summarize)
         except (OSError, ValueError, KeyError, TypeError, requests.RequestException) as exc:
             raise click.ClickException(f"Review failed ({type(exc).__name__}); check recording, JSON, output folder, and port.") from exc
         return

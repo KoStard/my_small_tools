@@ -411,13 +411,25 @@ def make_server(session, port=0):
 
 
 def launch(audio, output, imported=None, language=None, speakers=(), context="", meeting_date=None,
-           port=0, open_browser=True):
+           port=0, open_browser=True, summarize=None):
     session = ReviewSession(audio, output, imported, language, speakers, context, meeting_date)
+    url_suffix = ""
+    if summarize:
+        state = session.snapshot()
+        if state["profile"] != summarize:
+            state["profile"] = summarize
+            session.update(state)
+        state = session.snapshot()
+        if not session.notes or state["notes_revision"] != state["revision"]:
+            click.echo(f"Writing meeting notes ({summarize})...", err=True)
+            session.generate(state["revision"])
+        click.echo(f"Notes: {session.output / 'notes.md'}")
+        url_suffix = "#notes"
     with make_server(session, port) as server:
         click.echo(f"Review: {server.review_url}")
         click.echo(f"Saved locally: {session.output}\nCtrl+C closes the review server.", err=True)
         if open_browser:
-            webbrowser.open(server.review_url)
+            webbrowser.open(server.review_url + url_suffix)
         try:
             server.serve_forever()
         except KeyboardInterrupt:
