@@ -455,7 +455,7 @@ def notes(session, profile, context, meeting_date):
         if meeting_date is not None:
             state["meeting_date"] = meeting_date.strftime("%Y-%m-%d")
         session.update(state)
-    click.echo("Generating notes from the saved review (OpenRouter charges apply)...", err=True)
+    click.echo("Generating notes from the saved review...", err=True)
     session.generate(session.snapshot()["revision"])
     click.echo(f"Notes: {session.output / 'notes.md'}")
 

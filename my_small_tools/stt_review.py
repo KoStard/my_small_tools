@@ -184,7 +184,7 @@ class ReviewSession:
                     "timestamp_granularities[]": ["segment", "word"], "provider": json.dumps(OPTIONS)}
             if language:
                 data["language"] = language
-            click.echo("Transcribing with speaker detection (OpenRouter charges apply)...", err=True)
+            click.echo("Transcribing with speaker detection...", err=True)
             with part.open("rb") as handle:
                 return stt.request("audio/transcriptions", key, data=data, files={"file": (part.name, handle)})
 
