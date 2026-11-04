@@ -278,14 +278,18 @@ def main(audio: Path, summarize: str | None, output_dir: Path | None, speaker: t
          transcript_json: Path | None, port: int, no_open: bool):
     """Transcribe AUDIO using OPENROUTER_API_KEY from the environment.
 
-    Saves transcript.txt and a resumable state.json. --summarize also writes
-    notes.md (nested bullets and TODOs, no wiki links). Reruns reuse the saved
-    transcript, including manual corrections, and regenerate notes.
-
-    --review opens a local browser for speaker naming, audio playback, and
-    correcting passages before generating notes. New reviews use Deepgram
-    Nova-3; --transcript-json imports an existing diarized response. Review
-    edits live in <audio-stem>.review and reopen without retranscription.
+    \b
+    Two separate modes:
+      Quick (default)  stt AUDIO [--summarize]
+                       Plain transcript in <audio-stem>.stt/ (no speaker
+                       labels); --summarize also writes notes.md. Reruns reuse
+                       the saved transcript, including manual edits.
+      Review           stt AUDIO --review
+                       Speaker-labelled transcript in a local browser page
+                       (Deepgram Nova-3): name speakers, fix passages, then
+                       click "Save & generate notes". Saved in
+                       <audio-stem>.review/ and reopens without retranscription.
+                       --summarize and --force do not apply here.
 
     Install ffmpeg and ffprobe for automatic two-hour audio chunks and format
     conversion. Without them, supported files under 25 MB upload directly.
@@ -303,9 +307,20 @@ def main(audio: Path, summarize: str | None, output_dir: Path | None, speaker: t
     if not review and (transcript_json or port or no_open):
         raise click.ClickException("--transcript-json, --port and --no-open require --review.")
     if review:
-        if force or summarize:
-            raise click.ClickException("Review saves corrections; generate notes in the page. Use a new -o directory for a fresh transcription.")
-        from my_small_tools.stt_review import launch
+        if summarize:
+            raise click.ClickException(
+                "--summarize does not apply to --review: name speakers in the page, then click "
+                "\"Save & generate notes\" there (or run `stt-voice notes` afterwards). Drop --summarize.")
+        if force:
+            raise click.ClickException(
+                "--force does not apply to --review, which keeps your corrections. To transcribe again, "
+                "pass a new -o directory or delete the existing review folder.")
+        try:
+            from my_small_tools.stt_review import launch
+        except ModuleNotFoundError as exc:
+            raise click.ClickException(
+                f"Review needs the '{exc.name}' package, which this install is missing. Reinstall the tool "
+                "so new dependencies are picked up, e.g. `uv tool install --reinstall --editable <repo>`.") from exc
         try:
             launch(audio, output_dir or audio.with_name(f"{audio.stem}.review"), transcript_json,
                    language, speaker, context, meeting_date.strftime("%Y-%m-%d") if meeting_date else None,
