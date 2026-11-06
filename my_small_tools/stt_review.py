@@ -42,14 +42,45 @@ def transcript(state):
 SETTINGS = ("model", "language", "provider")
 
 
-def initial_state(raw, signature):
+def finite_time(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def word_turns(raw):
+    """Speaker turns from per-word labels, or None when the response has none.
+
+    Deepgram labels every word, but OpenRouter's segments are cut by pauses, not by
+    speaker, so one segment can hold both people under a single label. Word labels
+    keep each turn with its own speaker.
+    """
+    words = raw.get("words")
+    if not isinstance(words, list) or not words or not all(
+            isinstance(word, dict) and isinstance(word.get("word"), str)
+            and isinstance(word.get("speaker"), int) and not isinstance(word["speaker"], bool)
+            and finite_time(word.get("start")) and finite_time(word.get("end")) for word in words):
+        return None
+    turns = []
+    for word in words:
+        if turns and turns[-1]["speaker"] == word["speaker"]:
+            turns[-1]["text"] += " " + word["word"]
+            turns[-1]["end"] = max(turns[-1]["end"], word["end"])
+        else:
+            turns.append({"start": word["start"], "end": word["end"], "speaker": word["speaker"], "text": word["word"]})
+    for turn in turns:
+        # A one-word turn can have zero length; keep start < end for validation.
+        turn["end"] = max(turn["end"], turn["start"] + 0.01)
+    return turns
+
+
+def initial_state(raw, signature, word_level=True):
     if not isinstance(raw, dict):
         raise click.ClickException("Import a JSON object containing speaker-labeled segments.")
-    rows = raw.get("segments")
+    turns = word_turns(raw) if word_level else None
+    rows = turns or raw.get("segments")
     if (not isinstance(rows, list) or not rows or not all(isinstance(row, dict) for row in rows)
             or not any(row.get("speaker") is not None for row in rows)):
         raise click.ClickException("This transcript has no speaker-labeled segments. Import a diarized JSON response.")
-    labels, speakers, segments = {}, {}, []
+    labels, speakers, segments, speaker_ids = {}, {}, [], {}
     for index, row in enumerate(rows):
         if not isinstance(row.get("text"), str) or not all(
             isinstance(row.get(key), (int, float)) and not isinstance(row[key], bool)
@@ -61,6 +92,7 @@ def initial_state(raw, signature):
             identifier = f"P{len(labels) + 1}"
             labels[raw_id] = identifier
             speakers[identifier] = ""
+            speaker_ids[identifier] = raw_id
         if segments and segments[-1]["speaker"] == labels[raw_id]:
             segments[-1]["text"] += " " + row["text"]
             segments[-1]["end"] = row["end"]
@@ -70,9 +102,9 @@ def initial_state(raw, signature):
     duration = max(float(raw.get("duration") or 0), max(row["end"] for row in segments))
     if not math.isfinite(duration):
         raise click.ClickException("Imported duration must be finite.")
-    state = {"version": 1, "signature": signature, "revision": 0, "duration": duration,
-             "speakers": speakers, "segments": segments, "profile": "middle", "context": "",
-             "meeting_date": "", "notes_revision": None}
+    state = {"version": 2 if turns else 1, "signature": signature, "revision": 0, "duration": duration,
+             "speakers": speakers, "speaker_ids": speaker_ids, "segments": segments, "profile": "middle",
+             "context": "", "meeting_date": "", "notes_revision": None}
     validate_edits(state, state)
     return state
 
@@ -150,6 +182,7 @@ class ReviewSession:
                 self.state["signature"] = signature
                 stt.save(self.output / "recording.json", json.dumps(signature, ensure_ascii=False, indent=2))
             validate_edits(self.state, self.state)
+            self.upgrade_to_word_turns()
             self.persist()
         else:
             raw_path = self.output / "provider.json"
@@ -173,6 +206,33 @@ class ReviewSession:
             self.state.update(context=context, meeting_date=meeting_date or "")
             self.persist()
         self.notes = (self.output / "notes.md").read_text(encoding="utf-8") if (self.output / "notes.md").exists() else ""
+
+    def upgrade_to_word_turns(self):
+        """Rebuild an older segment-based review from per-word speakers, free of charge.
+
+        Only when no passage text, split, or speaker assignment was edited, so no
+        correction is lost. Names are cleared: they were chosen while listening to
+        passages that mixed both speakers, so they may sit on the wrong voice. Notes
+        become stale.
+        """
+        raw_path = self.output / "provider.json"
+        if self.state.get("version") != 1 or not raw_path.exists():
+            return
+        raw = json.loads(raw_path.read_text(encoding="utf-8"))
+        old = initial_state(raw, self.state["signature"], word_level=False)
+        passages = lambda state: [(row["speaker"], row["text"]) for row in state["segments"]]
+        if passages(old) != passages(self.state) or old["speakers"].keys() != self.state["speakers"].keys():
+            return
+        new = initial_state(raw, self.state["signature"])
+        if new["version"] != 2:
+            return
+        for key in ("profile", "context", "meeting_date"):
+            if key in self.state:
+                new[key] = self.state[key]
+        new["revision"] = self.state["revision"] + 1
+        self.state = new
+        click.echo("Rebuilt passages from word-level speaker labels (each turn now has one speaker). "
+                   "Name the speakers again, then regenerate notes.", err=True)
 
     def transcribe(self, language):
         key = os.environ.get("OPENROUTER_API_KEY", "").strip()
