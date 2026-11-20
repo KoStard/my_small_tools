@@ -16,6 +16,7 @@
 - `my_small_tools/forecast.py`: CSV time-series forecasting and plot generation.
 - `my_small_tools/youtube_transcribe.py`: fetch YouTube transcripts and save/print formatted text.
 - `my_small_tools/ffmpeg_convert.py`: batch wrapper around `ffmpeg`.
+- `my_small_tools/image_edit.py`: AI image editing via OpenRouter (`openai/gpt-image-2.6-sunburst` by default) saving results to `~/Downloads`.
 - `my_small_tools/remove_bg.py`, `my_small_tools/ls_time.py`, `my_small_tools/text_to_speech.py`, `my_small_tools/anki_image_compress.py`, `my_small_tools/separate_pictures.py`, `my_small_tools/google_maps_embed_generator.py`: standalone utilities.
 - `README.md`: user-facing notes focused on knowledge-base sync.
 - `GEMINI.md`: broader project overview and usage notes.
@@ -34,6 +35,7 @@ Registered entry points (`pyproject.toml`):
 - `uv run forecast ...`
 - `uv run remove_bg ...`
 - `uv run youtube-transcribe ...`
+- `uv run image-edit <image-path> <prompt>`: edit an image via OpenRouter (`OPENROUTER_API_KEY`, default `openai/gpt-image-2.6-sunburst`, `quality=high`, `complexity=high`) and save to `~/Downloads/<stem>_edited.<ext>`.
 - `uv run stt <audio-file> [--summarize]`
 - `uv run stt-voice {list,speakers,remember,match,name,dismiss,forget,notes} ...`: headless voice profile and review-name management; `--json` on list/speakers/match, `--me` or `--profile-id` for explicit enrollment updates.
 - `uv run stt <audio-file> --review [--transcript-json <diarized-response.json>]`: local playback, naming, corrections and notes; rerun to reopen saved edits. Outputs default to `/tmp/stt/<stem>.{stt,review}` (not beside the recording); a different recording with the same name gets `<stem> 2.…` automatically; `-o` overrides. Passages are built from Deepgram per-word speaker labels (OpenRouter segments split on pauses and can mix speakers); unedited older reviews are rebuilt from `provider.json` on open, with names cleared. Recordings are matched by an ffmpeg hash of the audio packets, so Voice Memos re-exports (new metadata) reuse saved work. `--port N` chooses a port; `--no-open` prints the URL.
