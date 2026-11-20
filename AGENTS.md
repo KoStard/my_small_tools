@@ -35,7 +35,7 @@ Registered entry points (`pyproject.toml`):
 - `uv run forecast ...`
 - `uv run remove_bg ...`
 - `uv run youtube-transcribe ...`
-- `uv run image-edit <image-path> <prompt>`: edit an image via OpenRouter (`OPENROUTER_API_KEY`, default `openai/gpt-image-2.6-sunburst`, `quality=high`, `complexity=high`) and save to `~/Downloads/<stem>_edited.<ext>`.
+- `uv run image-edit <image-path>... <prompt>`: edit one or more images via OpenRouter (`OPENROUTER_API_KEY`, default `openai/gpt-image-2.6-sunburst`, `quality=high`, `complexity=high`); single image saves to `~/Downloads/<stem>_edited.<ext>`, multiple images run in parallel (`-j/--jobs`, default 4) and save into a new `~/Downloads/image_edit_<timestamp>` subfolder.
 - `uv run stt <audio-file> [--summarize]`
 - `uv run stt-voice {list,speakers,remember,match,name,dismiss,forget,notes} ...`: headless voice profile and review-name management; `--json` on list/speakers/match, `--me` or `--profile-id` for explicit enrollment updates.
 - `uv run stt <audio-file> --review [--transcript-json <diarized-response.json>]`: local playback, naming, corrections and notes; rerun to reopen saved edits. Outputs default to `/tmp/stt/<stem>.{stt,review}` (not beside the recording); a different recording with the same name gets `<stem> 2.…` automatically; `-o` overrides. Passages are built from Deepgram per-word speaker labels (OpenRouter segments split on pauses and can mix speakers); unedited older reviews are rebuilt from `provider.json` on open, with names cleared. Recordings are matched by an ffmpeg hash of the audio packets, so Voice Memos re-exports (new metadata) reuse saved work. `--port N` chooses a port; `--no-open` prints the URL.
